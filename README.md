@@ -4,6 +4,8 @@
 
 # C³ - Continuous CVE Coverage
 
+**Get CVE alerts for the products you run.**
+
 Polls NVD on a schedule. Matches CVEs against your product list by CPE.
 Alerts Google Chat with severity, KEV status, EPSS score, and a curated title.
 Never alerts twice for the same CVE-state.
