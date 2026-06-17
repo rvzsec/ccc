@@ -22,7 +22,7 @@ Never alerts twice for the same CVE-state.
 ## Quick start
 
 ```bash
-git clone https://github.com/zynsec/ccc.git && cd ccc
+git clone https://github.com/rvzsec/ccc.git && cd ccc
 ./setup.sh                     # detects docker, builds image, resolves CPEs
 $EDITOR config/config.yaml     # paste your Google Chat webhook URL
 ```

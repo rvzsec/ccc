@@ -37,7 +37,7 @@ dependencies = [
 ccc = "ccc.cli:main"
 
 [project.urls]
-Repository = "https://github.com/zynsec/ccc"
+Repository = "https://github.com/rvzsec/ccc"
 
 [tool.setuptools.packages.find]
 include = ["ccc*"]

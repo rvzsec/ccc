@@ -95,7 +95,7 @@ class NvdClient:
         self,
         api_key: str | None = None,
         timeout: float = 30.0,
-        user_agent: str = "ccc/0.1 (+https://github.com/zynsec/ccc)",
+        user_agent: str = "ccc/0.1 (+https://github.com/rvzsec/ccc)",
     ) -> None:
         headers = {"User-Agent": user_agent, "Accept": "application/json"}
         if api_key:
