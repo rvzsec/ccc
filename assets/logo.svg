@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  C3 - Custom CVE Checker
+  Flat 3D cube with C-cubed glyph on the front face.
+  Flat dark fill (no gradients), neon green edges, transparent background.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <filter id="neon" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="2.5" result="blur1"/>
+      <feGaussianBlur in="SourceAlpha" stdDeviation="7"   result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g filter="url(#neon)">
+
+    <!-- ==========================================================
+         3D CUBE - 2-point perspective, flat dark fill.
+         Front face: 256x256 square, center at (244, 312).
+         Depth offset back-up-right: (+60, -55)
+         ========================================================== -->
+
+    <!-- Top face -->
+    <path d="M 116,184 L 372,184 L 432,129 L 176,129 Z"
+          fill="#0c1408"
+          stroke="#9fef00"
+          stroke-width="3.5"
+          stroke-linejoin="round"/>
+
+    <!-- Right face -->
+    <path d="M 372,184 L 372,440 L 432,385 L 432,129 Z"
+          fill="#0c1408"
+          stroke="#9fef00"
+          stroke-width="3.5"
+          stroke-linejoin="round"/>
+
+    <!-- Front face -->
+    <path d="M 116,184 L 372,184 L 372,440 L 116,440 Z"
+          fill="#0c1408"
+          stroke="#9fef00"
+          stroke-width="3.5"
+          stroke-linejoin="round"/>
+
+    <!-- ==========================================================
+         C with SUPERSCRIPT 3 - dead center on the front face.
+         Front face center: (244, 312)
+         ========================================================== -->
+
+    <g font-family="'Impact', 'Arial Black', 'Helvetica Neue', sans-serif"
+       font-weight="900"
+       fill="#9fef00">
+
+      <!-- C: glyph itself centered on cube front face SQUARE center (244, 312).
+           Position derived from pixel-accurate measurement of the rendered
+           image: C bbox center was at (580, 526) in 1024px render, square
+           center (488, 624). Shift -46x, +49y in viewBox to center. -->
+      <text x="183" y="374"
+            font-size="170"
+            text-anchor="start">C</text>
+
+      <!-- 3: decorative superscript at C's upper-right shoulder. -->
+      <text x="297" y="310"
+            font-size="85"
+            text-anchor="start">3</text>
+    </g>
+
+    <!-- Corner HUD brackets -->
+    <g stroke="#9fef00" stroke-width="3" fill="none" stroke-linecap="round">
+      <polyline points="40,60 40,40 60,40"/>
+      <polyline points="452,40 472,40 472,60"/>
+      <polyline points="40,452 40,472 60,472"/>
+      <polyline points="452,472 472,472 472,452"/>
+    </g>
+
+  </g>
+</svg>

@@ -1,0 +1,50 @@
+# C3 - products.yaml
+#
+# Just write product names. ccc resolves them to canonical CPEs at startup
+# via the NVD CPE Dictionary API and caches the result in your state dir
+# (`/state/cpe_cache.json` in docker mode, `./state/cpe_cache.json` in local
+# mode). CPEs are immutable identifiers so the cache is permanent. No need
+# to learn CPE syntax.
+#
+# First run does one NVD lookup per unresolved name (6s pacing without an
+# API key, 1.2s with one). Every subsequent run reads from cache instantly.
+# Delete the cache file to force re-resolution.
+
+products:
+  # ----- plain names: auto-resolved at startup -----
+  # ccc looks each one up at NVD's CPE Dictionary API and caches the result.
+  # These have been verified to resolve unambiguously.
+  - jenkins
+  - apache log4j
+  - fortinet fortios
+  - cisco asa
+  - atlassian confluence
+  - linux kernel
+  - openssl
+  - nginx
+  - postgresql
+
+  # ----- dict form: explicit CPE override -----
+  # Use this form when:
+  #   (a) the vendor has multiple product lines under the same name
+  #       (e.g. "vmware vcenter" matches vcenter_server, vcenter_operations,
+  #       vcenter_orchestrator - you have to pick one)
+  #   (b) NVD does not have a CPE for the name you used
+  #   (c) you want a specific version pin only
+  #
+  # Find the right CPE at https://nvd.nist.gov/products/cpe/search
+  - name: "VMware vCenter Server"
+    cpe:  "cpe:2.3:a:vmware:vcenter_server:*"
+
+  - name: "Citrix NetScaler ADC"
+    cpe:  "cpe:2.3:a:citrix:netscaler_application_delivery_controller:*"
+
+  - name: "Microsoft Exchange Server"
+    cpe:  "cpe:2.3:a:microsoft:exchange_server:*"
+
+  - name: "WordPress"
+    cpe:  "cpe:2.3:a:wordpress:wordpress:*"
+
+  # Strict version-pin example - only matches CVEs explicitly tagged 2.14.1
+  # - name: "Apache Log4j 2.14.1 only"
+  #   cpe:  "cpe:2.3:a:apache:log4j:2.14.1:*:*:*:*:*:*:*"

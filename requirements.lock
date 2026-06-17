@@ -1,0 +1,67 @@
+# C³ pinned dependency lock with SHA256 hashes.
+#
+# Install with:
+#   pip install --require-hashes --no-deps -r requirements.lock
+#
+# If a wheel is tampered with after publication, pip refuses to install.
+# Hashes captured by `pip download` against PyPI on Python 3.11/3.12/3.13
+# manylinux2014_x86_64. Verify independently with: make audit
+#
+# C-extension packages (pyyaml, pydantic-core) carry one hash per Python
+# minor version because each minor ships a different ABI-specific wheel.
+# Pure-Python packages carry one hash each.
+#
+# To regenerate after a version bump:
+#   docker run --rm python:3.13-slim-bookworm bash -c '
+#     for pyver in 3.11 3.12 3.13; do
+#       pip download --only-binary=:all: --platform manylinux2014_x86_64 \
+#         --python-version $pyver --dest /tmp/dl <pkg>==<ver>
+#     done && sha256sum /tmp/dl/*.whl'
+
+# ---------------- direct deps (4) ----------------
+
+click==8.1.7 \
+    --hash=sha256:ae74fb96c20a0277a1d615f1e4d73c8414f5a98db8b799a7931d1582f3390c28
+
+httpx==0.27.2 \
+    --hash=sha256:7bb2708e112d8fdd7829cd4243970f0c223274051cb35ee80c03301ee29a3df0
+
+pydantic==2.9.2 \
+    --hash=sha256:f048cec7b26778210e28a0459867920654d48e5e62db0958433636cde4254f12
+
+pyyaml==6.0.2 \
+    --hash=sha256:3ad2a3decf9aaba3d29c8f537ac4b243e36bef957511b4766cb0057d32b0be85 \
+    --hash=sha256:80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476 \
+    --hash=sha256:70b189594dbe54f75ab3a1acec5f1e3faa7e8cf2f1e08d9b561cb41b845f69d5
+
+# ---------------- transitive deps ----------------
+# All from same top-tier maintainers (Encode org, Pydantic team, PSF-adjacent).
+
+annotated-types==0.7.0 \
+    --hash=sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53
+
+anyio==4.13.0 \
+    --hash=sha256:08b310f9e24a9594186fd75b4f73f4a4152069e3853f1ed8bfbf58369f4ad708
+
+certifi==2026.5.20 \
+    --hash=sha256:3c52e209ba0a4ad7aebe60436a4ab349c39e1e602e8c134221e546902ad25897
+
+h11==0.16.0 \
+    --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
+
+httpcore==1.0.9 \
+    --hash=sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55
+
+idna==3.18 \
+    --hash=sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2
+
+pydantic-core==2.23.4 \
+    --hash=sha256:216f9b2d7713eb98cb83c80b9c794de1f6b7e3145eef40400c62e86cee5f4e1e \
+    --hash=sha256:128585782e5bfa515c590ccee4b727fb76925dd04a98864182b22e89a4e6ed36 \
+    --hash=sha256:8394d940e5d400d04cad4f75c0598665cbb81aecefaca82ca85bd28264af7f9b
+
+sniffio==1.3.1 \
+    --hash=sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2
+
+typing-extensions==4.15.0 \
+    --hash=sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548

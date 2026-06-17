@@ -1,0 +1,23 @@
+# /etc/systemd/system/ccc.timer
+#
+# Hourly scheduler for ccc.service.
+#
+# RandomizedDelaySec=300 spreads load — don't hammer NVD at HH:00:00 from
+# every ccc deployment in the world.
+#
+# Persistent=true means if the host was down at the scheduled time, the
+# service fires once on next boot to catch up. last_run.txt + the 24h
+# lookback cap make catch-up safe.
+
+[Unit]
+Description=Run C\u00b3 hourly
+Documentation=https://github.com/rvz/ccc
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=300
+Persistent=true
+Unit=ccc.service
+
+[Install]
+WantedBy=timers.target

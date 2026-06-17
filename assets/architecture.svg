@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  C3 - Continuous CVE Coverage - architecture flow.
+  U-shape: top row left->right, drops on the right, bottom row right->left.
+  Reads input -> output in a single compact frame.
+  Neon green on transparent.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 640" width="1440" height="640">
+  <defs>
+    <filter id="neon" x="-5%" y="-5%" width="110%" height="110%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1.5" result="blur1"/>
+      <feGaussianBlur in="SourceAlpha" stdDeviation="4"   result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9fef00"/>
+    </marker>
+  </defs>
+
+  <style>
+    .node    { fill: #0c1408; stroke: #9fef00; stroke-width: 2; }
+    .trigger { fill: #0c1408; stroke: #9fef00; stroke-width: 2.5; }
+    .label-title {
+      font-family: 'Impact', 'Arial Black', 'Helvetica Neue', sans-serif;
+      font-weight: 900; font-size: 19px; fill: #9fef00; text-anchor: middle;
+    }
+    .label-sub {
+      font-family: 'Courier New', monospace;
+      font-size: 12px; fill: #c3ff3a; text-anchor: middle;
+    }
+    .layer-tag {
+      font-family: 'Impact', 'Arial Black', sans-serif;
+      font-weight: 900; font-size: 18px; fill: #ff5454; text-anchor: middle;
+    }
+    .layer-tag-sub {
+      font-family: 'Courier New', monospace;
+      font-size: 14px; font-weight: bold; fill: #ffffff; text-anchor: middle;
+    }
+    .arrow   { stroke: #9fef00; stroke-width: 2.5; fill: none; }
+    .corner  { stroke: #9fef00; stroke-width: 3; fill: none; stroke-linecap: round; }
+    .row-label {
+      font-family: 'Impact', 'Arial Black', sans-serif;
+      font-weight: 900; font-size: 14px; fill: #9fef00; opacity: 0.6;
+      text-anchor: start;
+    }
+  </style>
+
+  <!-- Corner HUD brackets -->
+  <g class="corner" filter="url(#neon)">
+    <polyline points="30,50 30,30 50,30"/>
+    <polyline points="1390,30 1410,30 1410,50"/>
+    <polyline points="30,590 30,610 50,610"/>
+    <polyline points="1390,610 1410,610 1410,590"/>
+  </g>
+
+  <g filter="url(#neon)">
+
+    <!-- ROW 1: INGEST -->
+    <text class="row-label" x="60" y="80">INGEST</text>
+
+    <!-- Node 1: trigger -->
+    <rect class="trigger" x="60" y="120" width="240" height="100" rx="6"/>
+    <text class="label-title" x="180" y="155">cron / systemd</text>
+    <text class="label-title" x="180" y="178">timer</text>
+    <text class="label-sub"   x="180" y="200">docker compose run ccc</text>
+    <line class="arrow" x1="300" y1="170" x2="338" y2="170" marker-end="url(#arrow)"/>
+
+    <!-- Node 2: flock (L1) -->
+    <rect class="node" x="340" y="120" width="240" height="100" rx="6"/>
+    <text class="label-title" x="460" y="155">flock</text>
+    <text class="label-title" x="460" y="178">LOCK_EX | NB</text>
+    <text class="label-sub"   x="460" y="200">state/ccc.lock</text>
+    <text class="layer-tag"     x="460" y="245">L1</text>
+    <text class="layer-tag-sub" x="460" y="262">concurrent run guard</text>
+    <line class="arrow" x1="580" y1="170" x2="618" y2="170" marker-end="url(#arrow)"/>
+
+    <!-- Node 3: window math (L2) -->
+    <rect class="node" x="620" y="120" width="240" height="100" rx="6"/>
+    <text class="label-title" x="740" y="155">window math</text>
+    <text class="label-sub"   x="740" y="180">last_run - overlap</text>
+    <text class="label-sub"   x="740" y="198">to now</text>
+    <text class="layer-tag"     x="740" y="245">L2</text>
+    <text class="layer-tag-sub" x="740" y="262">mod-date windowing</text>
+    <line class="arrow" x1="860" y1="170" x2="898" y2="170" marker-end="url(#arrow)"/>
+
+    <!-- Node 4: NVD client -->
+    <rect class="node" x="900" y="120" width="240" height="100" rx="6"/>
+    <text class="label-title" x="1020" y="155">NVD client</text>
+    <text class="label-sub"   x="1020" y="180">lastModStartDate,</text>
+    <text class="label-sub"   x="1020" y="198">paginate, 6 s, 120 d cap</text>
+    <line class="arrow" x1="1140" y1="170" x2="1178" y2="170" marker-end="url(#arrow)"/>
+
+    <!-- Node 5: enrich -->
+    <rect class="node" x="1180" y="120" width="240" height="100" rx="6"/>
+    <text class="label-title" x="1300" y="155">enrich</text>
+    <text class="label-sub"   x="1300" y="180">EPSS + CISA KEV</text>
+    <text class="label-sub"   x="1300" y="198">(cached 6 h)</text>
+
+    <!-- Bend down to row 2 -->
+    <line class="arrow" x1="1300" y1="220" x2="1300" y2="418" marker-end="url(#arrow)"/>
+
+    <!-- ROW 2: PROCESS (right to left) -->
+    <text class="row-label" x="1340" y="395" text-anchor="end">PROCESS</text>
+
+    <!-- Node 6: matcher -->
+    <rect class="node" x="1180" y="420" width="240" height="100" rx="6"/>
+    <text class="label-title" x="1300" y="455">matcher</text>
+    <text class="label-sub"   x="1300" y="480">CPE triple match,</text>
+    <text class="label-sub"   x="1300" y="498">floor + KEV bypass</text>
+    <line class="arrow" x1="1180" y1="470" x2="1142" y2="470" marker-end="url(#arrow)"/>
+
+    <!-- Node 7: hash cache (L3) -->
+    <rect class="node" x="900" y="420" width="240" height="100" rx="6"/>
+    <text class="label-title" x="1020" y="455">hash cache</text>
+    <text class="label-sub"   x="1020" y="480">recent.json sha256</text>
+    <text class="label-sub"   x="1020" y="498">UPDATED suppressed</text>
+    <text class="layer-tag"     x="1020" y="545">L3</text>
+    <text class="layer-tag-sub" x="1020" y="562">state hash re-emit kill</text>
+    <line class="arrow" x1="900" y1="470" x2="862" y2="470" marker-end="url(#arrow)"/>
+
+    <!-- Node 8: notifier -->
+    <rect class="node" x="620" y="420" width="240" height="100" rx="6"/>
+    <text class="label-title" x="740" y="455">Google Chat</text>
+    <text class="label-title" x="740" y="478">cardsV2</text>
+    <text class="label-sub"   x="740" y="500">title resolver, colored</text>
+    <line class="arrow" x1="620" y1="470" x2="582" y2="470" marker-end="url(#arrow)"/>
+
+    <!-- Node 9: persist -->
+    <rect class="node" x="340" y="420" width="240" height="100" rx="6"/>
+    <text class="label-title" x="460" y="455">persist</text>
+    <text class="label-sub"   x="460" y="480">audit.jsonl append</text>
+    <text class="label-sub"   x="460" y="498">write last_run.txt</text>
+
+  </g>
+</svg>

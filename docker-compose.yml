@@ -1,0 +1,65 @@
+# C³ - docker compose orchestration.
+#
+# Three services:
+#   ccc    - production run (one-shot, called by cron/systemd on the host)
+#   test   - runs the dedup test suite, exits with pytest's exit code
+#   audit  - downloads pinned wheels and prints SHA256s for manual verification
+#            BEFORE you trust the lockfile
+
+services:
+
+  ccc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ccc:local
+    container_name: ccc
+    # one-shot - exits when the poll completes
+    restart: "no"
+    volumes:
+      - ./config:/config:ro
+      - ccc-state:/state
+    environment:
+      CCC_CONFIG: /config/config.yaml
+      CCC_STATE_DIR: /state
+    # Default command is --help. Override via `docker compose run ccc run`.
+    command: ["--help"]
+    # Drop everything we don't need.
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ccc:local
+    container_name: ccc-test
+    entrypoint: ["python", "-m", "unittest", "discover", "-v", "-s", "/app/tests"]
+    command: []
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  audit:
+    # Uses python image directly so we don't depend on our own Dockerfile
+    # to audit our own deps (avoid bootstrap-trust loop).
+    image: python:3.13-slim-bookworm
+    container_name: ccc-audit
+    working_dir: /audit
+    volumes:
+      - ./requirements.lock:/audit/requirements.lock:ro
+      - ./scripts/audit.sh:/audit/audit.sh:ro
+    entrypoint: ["bash", "/audit/audit.sh"]
+
+volumes:
+  ccc-state:
+    name: ccc-state

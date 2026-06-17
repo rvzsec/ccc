@@ -1,0 +1,63 @@
+# C3 - config.yaml
+#
+# Copy to config/config.yaml and edit. The compose mount expects this filename.
+#
+#   cp config/config.example.yaml config/config.yaml
+#   $EDITOR config/config.yaml
+
+# --- NVD API ---------------------------------------------------------------
+# RECOMMENDED: get a free key from https://nvd.nist.gov/developers/request-an-api-key
+# (2 minutes: enter email, click the link in the confirmation message).
+#
+# Without a key: 5 requests / 30s; CPE resolution waits 6s between lookups.
+# With a key:    50 requests / 30s; CPE resolution waits ~1.2s. About 10x
+#                faster cold-start resolution and more headroom during NVD
+#                churn events (big CVE drops sometimes 429 keyless clients).
+#
+# Leave as empty string to run keyless - works fine for small product lists
+# and hourly cron, just slower on the first validate.
+nvd_api_key: ""
+
+# --- Alert gate ------------------------------------------------------------
+# Minimum CVSS severity to alert on. KEV-listed CVEs bypass this (see below).
+# One of: critical | high | medium | low
+severity_floor: high
+
+# CISA Known Exploited Vulnerabilities. If true, KEV CVEs alert regardless
+# of severity floor (they are being actively exploited in the wild).
+kev_bypass_floor: true
+
+# EPSS (exploit-prediction) threshold for the priority highlight. 0.0 to 1.0.
+# Does NOT change whether we alert. Only affects card emphasis.
+epss_threshold: 0.5
+
+# Re-alert when an already-seen CVE's hash changes (CVSS bumped, KEV added,
+# vulnStatus moved, etc.). Most teams do not act on these so the default is
+# false. Flip to true if you want a [UPDATED] card fired on material changes.
+alert_on_update: false
+
+# --- Polling math ----------------------------------------------------------
+# Overlap added to the NVD lastModStartDate window to absorb NVD eventual
+# consistency. Dedup hash cache catches re-emits inside this overlap.
+poll_overlap_minutes: 10
+
+# Cap on lookback if state/last_run.txt is stale or missing. NVD caps single
+# requests at 120 days. Keep this well below that.
+max_lookback_hours: 24
+
+# --- Google Chat webhook ---------------------------------------------------
+# Incoming Webhook URL from a Google Chat space (NOT an Apps Script bot URL):
+#   space -> Apps & integrations -> Webhooks -> Add webhook
+google_chat_webhook: "https://chat.googleapis.com/v1/spaces/AAAA/messages?key=...&token=..."
+
+# --- Filesystem paths ------------------------------------------------------
+# These defaults assume DOCKER mode (paths inside the container, bound to a
+# volume via docker-compose.yml). DO NOT change them when running in docker.
+#
+# For LOCAL mode, ./setup.sh --local rewrites these to absolute host paths
+# automatically. If you copy this file manually (without setup.sh) and run
+# locally, you must change them yourself to host paths, e.g.:
+#   state_dir:      /home/you/ccc/state
+#   products_file:  /home/you/ccc/config/products.yaml
+state_dir: /state
+products_file: /config/products.yaml

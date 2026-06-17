@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ccc"
+version = "0.1.0"
+description = "C³ - Continuous CVE Coverage. Polls NVD for CVEs matching your product list and alerts to Google Chat."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Ravindu Wickramasinghe", email = "research@zyenra.com" }]
+keywords = ["cve", "nvd", "security", "monitoring", "vulnerability"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+]
+
+# Pinned exact versions. All maintainers audited (see README "Supply-chain notes").
+# Install with: pip install --require-hashes -r requirements.lock
+dependencies = [
+    "httpx==0.27.2",
+    "pydantic==2.9.2",
+    "pyyaml==6.0.2",
+    "click==8.1.7",
+]
+
+[project.scripts]
+ccc = "ccc.cli:main"
+
+[project.urls]
+Repository = "https://github.com/zynsec/ccc"
+
+[tool.setuptools.packages.find]
+include = ["ccc*"]
+exclude = ["tests*"]

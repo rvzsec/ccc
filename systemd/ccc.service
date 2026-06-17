@@ -1,0 +1,47 @@
+# /etc/systemd/system/ccc.service
+#
+# One-shot service that runs C³ via docker compose.
+# Paired with ccc.timer for scheduling.
+#
+# Install:
+#   sudo cp systemd/ccc.service /etc/systemd/system/
+#   sudo cp systemd/ccc.timer   /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ccc.timer
+#
+# Edit WorkingDirectory to point at your clone of the ccc repo.
+
+[Unit]
+Description=C\u00b3 CVE poll cycle
+Documentation=https://github.com/rvz/ccc
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/ccc
+ExecStart=/usr/bin/docker compose run --rm ccc run
+
+# Hardening — service runs as root (needs docker socket) but we lock down
+# what root can do here.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ccc
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+
+# Don't restart on failure — the timer fires us again. Lock file prevents overlap.
+Restart=no
+
+# Don't let a wedged poll run forever.
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target

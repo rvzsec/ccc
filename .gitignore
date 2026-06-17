@@ -1,0 +1,118 @@
+### ccc - secrets & runtime ###############################################
+# Real config files - only the .example versions are committed.
+# Secrets (NVD API key, Google Chat webhook) live here.
+config/config.yaml
+config/products.yaml
+config/*.yaml
+!config/*.example.yaml
+
+# Sandbox / test configs created during local iteration.
+config-test/
+config-test-*/
+
+# Runtime state (Docker volume in container mode, ./state/ in local mode).
+# Path-anchored so a future fixture named e.g. tests/recent.json is NOT ignored.
+state/
+**/state/
+*.tmp
+*.bak
+*.orig
+# Path-anchored state files so they only match under state/
+state/audit.jsonl
+state/audit.jsonl.*
+state/recent.json
+state/last_run.txt
+state/kev.json
+state/cpe_cache.json
+state/ccc.lock
+# Generic lock files at repo root are runtime artifacts, NOT requirements.lock.
+/*.lock
+# requirements.lock IS the supply-chain integrity manifest - must be committed.
+!requirements.lock
+
+# .env files (NVD key, webhook URL, etc. if someone exports them).
+.env
+.env.*
+!.env.example
+
+### Python ##################################################################
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+build/
+dist/
+wheels/
+pip-wheel-metadata/
+.Python
+
+# venvs (anyone testing without docker)
+.venv/
+venv/
+env/
+ENV/
+
+# Test + lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+### Docker ##################################################################
+# Docker compose override files often contain local secrets / volume paths.
+docker-compose.override.yml
+docker-compose.override.yaml
+.docker/
+
+### Editors / IDEs ##########################################################
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.\#*
+\#*\#
+
+# JetBrains, vim, emacs leftovers
+.history/
+.ionide/
+
+### OS junk #################################################################
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+### Logs & temp #############################################################
+*.log
+*.log.*
+logs/
+tmp/
+.tmp/
+
+### Internal tooling state ##################################################
+# OMO / opencode session state, agent run logs, local plan files.
+.omo/
+.opencode/
+.claude/
+
+### Asset build cache #######################################################
+# We commit only the SVGs (assets/logo.svg, assets/architecture.svg).
+# PNGs are derived and re-rendered on demand by tools - never committed.
+assets/*.png
+assets/*.jpg
+assets/*.jpeg
+assets/*.webp
