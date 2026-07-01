@@ -12,6 +12,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     image: ccc:local
     container_name: ccc
     # one-shot - exits when the poll completes
@@ -37,7 +38,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ccc:local
+      target: test
+    image: ccc:test
     container_name: ccc-test
     entrypoint: ["python", "-m", "unittest", "discover", "-v", "-s", "/app/tests"]
     command: []
