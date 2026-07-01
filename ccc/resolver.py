@@ -224,15 +224,14 @@ def _resolve_one(client: httpx.Client, raw_name: str) -> str:
     # Score each distinct canonical CPE by token overlap with raw name.
     name_tokens = _tokenize(raw_name)
 
-    def score(cpe: str, vote_count: int) -> tuple[int, int]:
+    def score(cpe: str, vote_count: int) -> tuple[int, int, int]:
         parts = cpe.split(":")
         vendor = parts[3] if len(parts) > 3 else ""
         product = parts[4] if len(parts) > 4 else ""
         cpe_tokens = _tokenize(f"{vendor} {product}")
         overlap = len(name_tokens & cpe_tokens)
-        # Higher vote count = NVD has more CVEs/entries for this product,
-        # which is a strong signal that it is THE canonical project.
-        return (overlap, vote_count)
+        extra = len(cpe_tokens - name_tokens)
+        return (overlap, -extra, vote_count)
 
     scored = sorted(
         ((score(cpe, n), cpe) for cpe, n in votes.items()),
@@ -249,7 +248,8 @@ def _resolve_one(client: httpx.Client, raw_name: str) -> str:
     # overlap. Vote count differentiates them otherwise.
     if len(scored) > 1:
         second_score, _ = scored[1]
-        if second_score[0] == top_score[0] and second_score[1] >= top_score[1] / 2:
+        if (second_score[0] == top_score[0] and second_score[1] == top_score[1]
+                and second_score[2] >= top_score[2] / 2):
             sample = [c for _, c in scored[:5]]
             raise ResolveError(
                 f"ambiguous: top candidates share equal name-overlap. "
