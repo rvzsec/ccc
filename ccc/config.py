@@ -24,6 +24,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 Severity = Literal["critical", "high", "medium", "low"]
+AlertMode = Literal["individual", "batch"]
 SEVERITY_SCORES: dict[str, float] = {
     "critical": 9.0,
     "high": 7.0,
@@ -45,6 +46,10 @@ class Product(BaseModel):
 
     name: str = Field(..., min_length=1, description="Human-readable label")
     cpe: str = Field(..., description="CPE 2.3 string, e.g. cpe:2.3:a:apache:log4j:*")
+    alert_mode: AlertMode = Field(
+        default="individual",
+        description="individual = one alert per CVE. batch = one digest per product per run.",
+    )
 
     @field_validator("cpe")
     @classmethod
@@ -113,6 +118,7 @@ def load_raw_products(path: Path) -> list[RawProductEntry]:
 
     String entries get auto-resolved to CPEs at startup via resolver.py.
     Dict entries are passed through (operator-provided CPE override).
+    Dict entries may optionally include 'alert_mode' (individual|batch).
     """
     with path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
@@ -131,6 +137,16 @@ def load_raw_products(path: Path) -> list[RawProductEntry]:
                 raise ValueError(
                     f"products[{i}]: dict entry must have both 'name' and 'cpe' keys"
                 )
+            extra = set(entry.keys()) - {"name", "cpe", "alert_mode"}
+            if extra:
+                raise ValueError(
+                    f"products[{i}]: unknown key(s) {sorted(extra)}"
+                )
+            am = entry.get("alert_mode", "individual")
+            if am not in {"individual", "batch"}:
+                raise ValueError(
+                    f"products[{i}]: alert_mode must be 'individual' or 'batch', got {am!r}"
+                )
         else:
             raise ValueError(
                 f"products[{i}]: must be a string (name) or dict (name+cpe), "
@@ -139,9 +155,9 @@ def load_raw_products(path: Path) -> list[RawProductEntry]:
     return raw_list
 
 
-def build_product(name: str, cpe: str) -> Product:
+def build_product(name: str, cpe: str, alert_mode: AlertMode = "individual") -> Product:
     """Construct a validated Product from a resolved name+cpe pair."""
-    return Product(name=name, cpe=cpe)
+    return Product(name=name, cpe=cpe, alert_mode=alert_mode)
 
 
 # Kept for back-compat with tests that pre-date the resolver. Treats every
@@ -156,5 +172,9 @@ def load_products(path: Path) -> list[Product]:
                 "use the cli path (which calls the resolver) or supply "
                 "a full {name, cpe} dict in products.yaml"
             )
-        out.append(Product(**entry))
+        out.append(Product(
+            name=entry["name"],
+            cpe=entry["cpe"],
+            alert_mode=entry.get("alert_mode", "individual"),
+        ))
     return out

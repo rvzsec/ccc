@@ -8,6 +8,12 @@ Docs:
   https://developers.google.com/workspace/chat/format-messages
 
 --dry-run prints the exact text body to stdout and sends nothing.
+
+Batch (digest) mode:
+  When a product is configured with alert_mode: batch (in products.yaml),
+  CVEs are grouped by product and sent as one digest per run instead of
+  one card per CVE. The digest card summarises CVSS range, EPSS range,
+  KEV count, and lists each CVE as a hyperlinked advisory.
 """
 from __future__ import annotations
 
@@ -44,6 +50,27 @@ def send_alert(
     _post(webhook_url, payload, timeout)
 
 
+def send_batch_alert(
+    webhook_url: str,
+    product_name: str,
+    matches: list[Match],
+    dry_run: bool = False,
+    timeout: float = 15.0,
+) -> None:
+    """Send one batch digest for a product's new CVEs this run.
+
+    Groups all new CVEs for a single product into one cardsV2 message
+    with a summary header and a numbered advisory list.
+    """
+    if not matches:
+        return
+    payload = _build_batch_payload(product_name, matches)
+    if dry_run:
+        print(_dry_run_batch_render(product_name, matches))
+        return
+    _post(webhook_url, payload, timeout)
+
+
 def _dry_run_render(match: Match, is_update: bool) -> str:
     """Best-effort plain-text rendering of the card for --dry-run."""
     cve = match.cve
@@ -64,6 +91,66 @@ def _dry_run_render(match: Match, is_update: bool) -> str:
         f"KEV:      {kev}",
         f"Advisory: {cve.nvd_url}",
     ]
+    return "\n".join(lines)
+
+
+def _dry_run_batch_render(product_name: str, matches: list[Match]) -> str:
+    """Best-effort plain-text rendering of a batch digest for --dry-run.
+
+    Mirrors _build_batch_payload as closely as ASCII allows: same header
+    wording, same tight layout, same 55-char title cap, no per-line
+    CVSS/KEV/EPSS repetition.
+    """
+    n = len(matches)
+    scores = sorted([m.cve.cvss_score for m in matches if m.cve.cvss_score is not None])
+    sevs_seen: list[str] = []
+    sev_map = {
+        "CRITICAL": "Critical", "HIGH": "High", "MEDIUM": "Medium",
+        "LOW": "Low", "NONE": "None", "UNKNOWN": "Unknown",
+    }
+    for m in matches:
+        label = sev_map.get((m.cve.cvss_severity or "UNKNOWN").upper(), "Unknown")
+        if label not in sevs_seen:
+            sevs_seen.append(label)
+    epss_vals = [m.epss for m in matches if m.epss is not None]
+    kev_ids = [m.cve.cve_id for m in matches if m.kev]
+    statuses = sorted({m.cve.vuln_status for m in matches})
+
+    lines = [f"{product_name} CVEs ({n})", ""]
+
+    if scores:
+        if abs(scores[0] - scores[-1]) < 0.05:
+            cvss_line = f"CVSS: {scores[0]:.1f} ("
+        else:
+            cvss_line = f"CVSS Range: {scores[0]:.1f} to {scores[-1]:.1f} ("
+        if len(sevs_seen) == 1:
+            suffix = " only" if n > 1 else ""
+            cvss_line += f"{sevs_seen[0]}{suffix})"
+        else:
+            cvss_line += f"{', '.join(sevs_seen)})"
+        lines.append(cvss_line)
+    else:
+        lines.append("CVSS: N/A")
+
+    lines.append(f"Status: {', '.join(statuses)}")
+    if epss_vals:
+        lo, hi = min(epss_vals) * 100, max(epss_vals) * 100
+        if abs(lo - hi) < 0.05:
+            lines.append(f"EPSS: {lo:.1f}%")
+        else:
+            lines.append(f"EPSS Range: {lo:.1f}% to {hi:.1f}%")
+    else:
+        lines.append("EPSS: n/a")
+    if kev_ids:
+        lines.append(f"KEV: {len(kev_ids)} actively exploited ({', '.join(kev_ids)})")
+    else:
+        lines.append("KEV: None")
+
+    lines.append("")
+    lines.append("Advisories: See below")
+    for i, m in enumerate(matches, 1):
+        title = _derive_title(m, max_len=55)
+        lines.append(f"{i}. {m.cve.cve_id}: {title}")
     return "\n".join(lines)
 
 
@@ -199,6 +286,136 @@ def _build_payload(match: Match, is_update: bool) -> dict[str, Any]:
                 "cardId": cve.cve_id,
                 "card": {
                     "sections": [{"widgets": widgets}],
+                },
+            }
+        ],
+    }
+
+
+def _build_batch_payload(product_name: str, matches: list[Match]) -> dict[str, Any]:
+    """Build one batch digest cardsV2 message for a product's new CVEs.
+
+    Groups all new CVEs for a single product into a summary header (CVSS
+    range, EPSS range, KEV count) and a numbered advisory list with
+    hyperlinked CVE IDs.
+    """
+    n = len(matches)
+    product_e = _esc(product_name)
+
+    # --- summary stats ---
+    scores = sorted(
+        [m.cve.cvss_score for m in matches if m.cve.cvss_score is not None]
+    )
+    sevs_seen: list[str] = []
+    for m in matches:
+        s = (m.cve.cvss_severity or "UNKNOWN").upper()
+        sev_map = {"CRITICAL": "Critical", "HIGH": "High", "MEDIUM": "Medium", "LOW": "Low", "NONE": "None", "UNKNOWN": "Unknown"}
+        label = sev_map.get(s, "Unknown")
+        if label not in sevs_seen:
+            sevs_seen.append(label)
+
+    epss_vals = [m.epss for m in matches if m.epss is not None]
+    kev_matches = [m for m in matches if m.kev]
+    statuses = sorted({m.cve.vuln_status for m in matches})
+
+    # CVSS range line
+    if scores:
+        min_s = scores[0]
+        max_s = scores[-1]
+        if abs(min_s - max_s) < 0.05:
+            cvss_html = f"<b>CVSS:</b> {min_s:.1f} ("
+        else:
+            cvss_html = f"<b>CVSS Range:</b> {min_s:.1f} to {max_s:.1f} ("
+        # severity description. "only" suffix only makes sense when there
+        # are multiple CVEs sharing one severity - otherwise it's just noise.
+        if len(sevs_seen) == 1:
+            s = sevs_seen[0]
+            s_key = s.upper()
+            color = SEVERITY_COLOR.get(s_key, SEVERITY_COLOR["UNKNOWN"])
+            suffix = " only" if n > 1 else ""
+            cvss_html += f"<font color=\"{_esc(color)}\"><b>{_esc(s)}</b></font>{suffix})"
+        else:
+            sev_parts = []
+            for s in sevs_seen:
+                s_key = s.upper()
+                color = SEVERITY_COLOR.get(s_key, SEVERITY_COLOR["UNKNOWN"])
+                sev_parts.append(
+                    f"<font color=\"{_esc(color)}\"><b>{_esc(s)}</b></font>"
+                )
+            cvss_html += ", ".join(sev_parts) + ")"
+    else:
+        cvss_html = "<b>CVSS:</b> N/A"
+
+    # Status line
+    status_html = f"<b>Status:</b> {_esc(', '.join(statuses))}"
+
+    # EPSS line: show a single value when min == max (or only one CVE has
+    # an EPSS score), a range otherwise. "X% to X%" would be silly.
+    if epss_vals:
+        lo, hi = min(epss_vals) * 100, max(epss_vals) * 100
+        if abs(lo - hi) < 0.05:
+            epss_html = f"<b>EPSS:</b> {lo:.1f}%"
+        else:
+            epss_html = f"<b>EPSS Range:</b> {lo:.1f}% to {hi:.1f}%"
+    else:
+        epss_html = "<b>EPSS:</b> n/a"
+
+    # KEV line
+    if kev_matches:
+        kev_list = ", ".join(
+            f"<font color=\"#cc0000\"><b>{_esc(m.cve.cve_id)}</b></font>"
+            for m in kev_matches
+        )
+        kev_html = (
+            f"<b>KEV:</b> {len(kev_matches)} actively exploited ({kev_list})"
+        )
+    else:
+        kev_html = "<b>KEV:</b> None"
+
+    # --- advisory list ---
+    # Just the CVE id + title, hyperlinked. CVSS/EPSS/KEV per line was
+    # duplication - the summary header already surfaces those. Keep advisory
+    # rows to the minimum: number, link, title.
+    #
+    # Title cap tuned for Google Chat card width. The CVE id prefix
+    # ("CVE-YYYY-NNNNN: ") eats ~17 chars, so the title itself must fit in
+    # the remaining ~55-60 chars to stay on one visual line. Longer NVD
+    # descriptions are truncated with an ellipsis.
+    advisory_lines: list[str] = []
+    for i, m in enumerate(matches, 1):
+        nvd_url_e = _esc(m.cve.nvd_url, quote=True)
+        cve_id_e = _esc(m.cve.cve_id)
+        title_e = _esc(_derive_title(m, max_len=55))
+        advisory_lines.append(
+            f"{i}. <a href=\"{nvd_url_e}\">{cve_id_e}: {title_e}</a>"
+        )
+
+    # --- assemble ---
+    # Tight formatting: single <br> between rows, no empty lines. Google Chat
+    # renders each empty string joined by <br> as an extra visible gap, which
+    # is why the previous version looked spaced-out and ugly.
+    header = f"<b>{product_e} CVEs</b> ({n})"
+    summary_lines = "<br>".join([cvss_html, status_html, epss_html, kev_html])
+    advisories_block = "<b>Advisories:</b> See below<br>" + "<br>".join(advisory_lines)
+
+    body = f"{header}<br><br>{summary_lines}<br><br>{advisories_block}"
+
+    # Top-level text for notification preview (plain text, simple markup).
+    preview_scores = f"{scores[0]:.1f}" if scores else "N/A"
+    if len(scores) > 1:
+        preview_scores += f"-{scores[-1]:.1f}"
+    kev_tag = ", includes KEV" if kev_matches else ""
+    preview = f"{product_name} CVEs ({n}): CVSS {preview_scores}{kev_tag}"
+
+    return {
+        "text": preview,
+        "cardsV2": [
+            {
+                "cardId": f"batch-{product_name.replace(' ', '-')}",
+                "card": {
+                    "sections": [
+                        {"widgets": [{"textParagraph": {"text": body}}]}
+                    ],
                 },
             }
         ],
