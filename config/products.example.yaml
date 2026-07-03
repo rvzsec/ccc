@@ -14,6 +14,7 @@ products:
   # ----- plain names: auto-resolved at startup -----
   # ccc looks each one up at NVD's CPE Dictionary API and caches the result.
   # These have been verified to resolve unambiguously.
+  # Plain names always use alert_mode: individual (one alert per CVE).
   - jenkins
   - apache log4j
   - fortinet fortios
@@ -31,6 +32,12 @@ products:
   #       vcenter_orchestrator - you have to pick one)
   #   (b) NVD does not have a CPE for the name you used
   #   (c) you want a specific version pin only
+  #   (d) you want alert_mode: batch for a daily/weekly digest instead of
+  #       individual cards flooding your chat
+  #
+  # alert_mode (optional, default: individual):
+  #   individual  - one Google Chat card per CVE (existing behavior)
+  #   batch       - one digest per product per poll, groups all new CVEs
   #
   # Find the right CPE at https://nvd.nist.gov/products/cpe/search
   - name: "VMware vCenter Server"
@@ -44,6 +51,7 @@ products:
 
   - name: "WordPress"
     cpe:  "cpe:2.3:a:wordpress:wordpress:*"
+    alert_mode: batch
 
   # Strict version-pin example - only matches CVEs explicitly tagged 2.14.1
   # - name: "Apache Log4j 2.14.1 only"

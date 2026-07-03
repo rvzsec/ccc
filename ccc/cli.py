@@ -22,7 +22,7 @@ import click
 
 from ccc import __brand__, __version__
 from ccc._logging import configure as configure_logging
-from ccc.config import Config, Product, build_product, load_config, load_raw_products
+from ccc.config import AlertMode, Config, Product, build_product, load_config, load_raw_products
 from ccc.notifier import NotifyError, send_test
 from ccc.resolver import ResolveError, resolve_names
 from ccc.lock import acquire_or_exit
@@ -181,12 +181,16 @@ def _load_products_or_die(cfg: Config) -> list[Product]:
 
     # Split entries: plain strings need resolution, dicts pass through.
     plain_names: list[str] = []
-    direct_pairs: list[tuple[str, str]] = []  # (name, cpe)
+    direct_entries: list[tuple[str, str, AlertMode]] = []  # (name, cpe, alert_mode)
     for entry in raw_entries:
         if isinstance(entry, str):
             plain_names.append(entry)
         else:
-            direct_pairs.append((entry["name"], entry["cpe"]))
+            direct_entries.append((
+                entry["name"],
+                entry["cpe"],
+                entry.get("alert_mode", "individual"),
+            ))
 
     # Resolve plain names via NVD + cache.
     resolutions = []
@@ -216,9 +220,9 @@ def _load_products_or_die(cfg: Config) -> list[Product]:
                 err=True,
             )
             sys.exit(1)
-    for name, cpe in direct_pairs:
+    for name, cpe, alert_mode in direct_entries:
         try:
-            products.append(build_product(name, cpe))
+            products.append(build_product(name, cpe, alert_mode))
         except Exception as e:
             click.echo(f"ccc: override CPE {cpe!r} invalid: {e}", err=True)
             sys.exit(1)
