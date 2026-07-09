@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Zyenra Security
 """Match NVD CVEs against the user's product list and apply the alert gate.
 
 Match rule:

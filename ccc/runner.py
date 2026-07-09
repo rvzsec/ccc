@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Zyenra Security
 """One poll cycle.
 
 Pure orchestration: fetch -> enrich -> match -> dedup -> alert -> persist.
