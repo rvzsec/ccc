@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Zyenra Security
 """Config loading & validation.
 
 Two files:

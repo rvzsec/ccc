@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Zyenra Security
 """NVD API 2.0 client.
 
 Docs: https://nvd.nist.gov/developers/vulnerabilities

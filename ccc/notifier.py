@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Zyenra Security
 """Google Chat webhook notifier.
 
 Uses Incoming Webhook URL from a Chat space (NOT an Apps Script bot URL).

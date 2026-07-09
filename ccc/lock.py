@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Zyenra Security
 """Single-instance guard via fcntl.flock.
 
 Second invocation while another is running → exit 0 (silent, not an error).
