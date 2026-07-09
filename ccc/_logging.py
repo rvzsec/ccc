@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Zyenra Security
 """Logging setup for ccc.
 
 One logger named "ccc" is configured by `configure()` (called once from
