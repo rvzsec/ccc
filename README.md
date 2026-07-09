@@ -15,7 +15,7 @@ Never alerts twice for the same CVE-state.
 - Runs in Docker (recommended) or local venv via `./setup.sh --local`
 - Six flat state files, no database (see [State files](#state-files))
 - Dedup proven by 10 unit tests in [`tests/test_dedup.py`](tests/test_dedup.py)
-- ~1800 LOC across [10 modules](ccc/)
+- ~2500 LOC across [12 modules](ccc/)
 
 ---
 

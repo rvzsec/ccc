@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Zyenra Security
 """CWE (Common Weakness Enumeration) short-name table.
 
 NVD assigns one or more CWE IDs to most CVEs (the `weaknesses` field in the

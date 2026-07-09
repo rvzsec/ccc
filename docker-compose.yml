@@ -23,8 +23,8 @@ services:
     environment:
       CCC_CONFIG: /config/config.yaml
       CCC_STATE_DIR: /state
-    # Default command is --help. Override via `docker compose run ccc run`.
-    command: ["--help"]
+    # Default command is `run`. Override with any subcommand e.g. `validate`, `test-webhook`.
+    command: ["run"]
     # Drop everything we don't need.
     read_only: true
     tmpfs:

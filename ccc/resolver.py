@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Zyenra Security
 """CPE auto-resolution from human product names.
 
 You write "jenkins" in products.yaml. ccc looks up the canonical CPE via

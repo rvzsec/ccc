@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Zyenra Security
 """Signal enrichment - EPSS (FIRST.org) + CISA KEV.
 
 EPSS: exploit-prediction score, 0.0 to 1.0. Higher = more likely to be
