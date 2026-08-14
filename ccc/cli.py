@@ -24,7 +24,15 @@ import click
 
 from ccc import __brand__, __version__
 from ccc._logging import configure as configure_logging
-from ccc.config import AlertMode, Config, Product, build_product, load_config, load_raw_products
+from ccc.config import (
+    AlertMode,
+    BatchPeriod,
+    Config,
+    Product,
+    build_product,
+    load_categories_and_products,
+    load_config,
+)
 from ccc.notifier import NotifyError, send_test
 from ccc.resolver import ResolveError, resolve_names
 from ccc.lock import acquire_or_exit
@@ -169,11 +177,13 @@ def _load_products_or_die(cfg: Config) -> list[Product]:
 
     Each entry is either a plain string (auto-resolved via NVD CPE API
     + on-disk cache) or a full {name, cpe} dict (operator override).
+    Categories supply the default alert_mode + batch_period; a per-product
+    `alert_mode` override wins over the category.
     Resolution failure aborts startup with a helpful message.
     """
     path = cfg.products_file
     try:
-        raw_entries = load_raw_products(path)
+        categories, raw_entries = load_categories_and_products(path)
     except FileNotFoundError:
         click.echo(f"ccc: products file not found: {path}", err=True)
         sys.exit(1)
@@ -183,15 +193,19 @@ def _load_products_or_die(cfg: Config) -> list[Product]:
 
     # Split entries: plain strings need resolution, dicts pass through.
     plain_names: list[str] = []
-    direct_entries: list[tuple[str, str, AlertMode]] = []  # (name, cpe, alert_mode)
+    direct_entries: list[tuple[str, str, AlertMode, str, BatchPeriod]] = []
     for entry in raw_entries:
         if isinstance(entry, str):
             plain_names.append(entry)
         else:
+            cat_name = entry.get("category", "default")
+            cat = categories[cat_name]
             direct_entries.append((
                 entry["name"],
                 entry["cpe"],
-                entry.get("alert_mode", "individual"),
+                entry.get("alert_mode", cat.alert_mode),
+                cat_name,
+                cat.batch_period,
             ))
 
     # Resolve plain names via NVD + cache.
@@ -212,19 +226,38 @@ def _load_products_or_die(cfg: Config) -> list[Product]:
             tag = "[cached]" if r.source == "cache" else "[NVD]"
             click.echo(f"ccc: resolved {tag} {r.name!r} -> {r.cpe}")
 
+    default_cat = categories["default"]
     products: list[Product] = []
     for r in resolutions:
         try:
-            products.append(build_product(r.name, r.cpe))
+            products.append(
+                build_product(
+                    r.name,
+                    r.cpe,
+                    default_cat.alert_mode,
+                    category=default_cat.name,
+                    batch_period=default_cat.batch_period,
+                    accent_color=default_cat.accent_color,
+                    category_label=default_cat.label,
+                )
+            )
         except Exception as e:
             click.echo(
                 f"ccc: resolved CPE for {r.name!r} failed validation: {e}",
                 err=True,
             )
             sys.exit(1)
-    for name, cpe, alert_mode in direct_entries:
+    for name, cpe, alert_mode, cat_name, batch_period in direct_entries:
         try:
-            products.append(build_product(name, cpe, alert_mode))
+            cat = categories[cat_name]
+            products.append(
+                build_product(
+                    name, cpe, alert_mode, category=cat_name,
+                    batch_period=batch_period,
+                    accent_color=cat.accent_color,
+                    category_label=cat.label,
+                )
+            )
         except Exception as e:
             click.echo(f"ccc: override CPE {cpe!r} invalid: {e}", err=True)
             sys.exit(1)

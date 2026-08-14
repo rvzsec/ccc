@@ -9,12 +9,61 @@
 # First run does one NVD lookup per unresolved name (6s pacing without an
 # API key, 1.2s with one). Every subsequent run reads from cache instantly.
 # Delete the cache file to force re-resolution.
+#
+# --- Categories (tiers) ----------------------------------------------------
+# Optional. Groups products that share an alert policy. Every product belongs
+# to a category; the category decides HOW and HOW OFTEN that product alerts.
+#
+#   categories:
+#     <name>:
+#       alert_mode: individual | batch
+#       batch_period: daily | weekly     # only used when alert_mode: batch
+#       accent_color: "#rrggbb"          # optional colored footer line
+#       label: "Tier 1 - Production"     # optional pretty name for the footer
+#
+#   label - the key (e.g. `tier1`) is what products reference in
+#   `category:`. This `label` is what shows on the card footer instead -
+#   keep keys short, display names pretty.
+#
+#   individual  - one Google Chat card per CVE, sent immediately.
+#                Use for tier-1 / production products.
+#   batch      - CVEs accumulate per TIER and flush as ONE digest card per
+#                tier every batch_period, grouped by product inside the card
+#                (e.g. "Product A (2)" then its CVEs, "Product B (1)" then
+#                its CVE). Products without a category share the implicit
+#                "default" tier, so untiered batch products still produce a
+#                single card.
+#   accent_color - renders the tier name (italic) + a colored line at the
+#                bottom of every card in this category, in this color.
+#
+# If the categories key is absent, an implicit `default` category applies:
+# alert_mode: individual (legacy behavior).
+#
+# A product may override its category's alert_mode with a per-product
+# `alert_mode:` key. batch_period and accent_color always come from the
+# category.
+
+categories:
+  default:
+    alert_mode: individual
+
+  # Tier-2 example: internal servers, immediate but grouped per product.
+  # server:
+  #   alert_mode: batch
+  #   batch_period: daily
+  #   accent_color: "#e67e22"
+
+  # Tier-3 example: consumer apps, one digest per product every week.
+  consumer:
+    alert_mode: batch
+    batch_period: weekly
+    accent_color: "#d4ac0d"
 
 products:
   # ----- plain names: auto-resolved at startup -----
   # ccc looks each one up at NVD's CPE Dictionary API and caches the result.
   # These have been verified to resolve unambiguously.
-  # Plain names always use alert_mode: individual (one alert per CVE).
+  # Plain names always use the `default` category (individual alerts).
   - jenkins
   - apache log4j
   - fortinet fortios
@@ -32,12 +81,11 @@ products:
   #       vcenter_orchestrator - you have to pick one)
   #   (b) NVD does not have a CPE for the name you used
   #   (c) you want a specific version pin only
-  #   (d) you want alert_mode: batch for a daily/weekly digest instead of
-  #       individual cards flooding your chat
+  #   (d) you want to assign the product to a category (tier)
   #
-  # alert_mode (optional, default: individual):
-  #   individual  - one Google Chat card per CVE (existing behavior)
-  #   batch       - one digest per product per poll, groups all new CVEs
+  # category (optional, default: default) - name of a category defined above.
+  # alert_mode (optional) - overrides the category's alert_mode for this
+  #   product only.
   #
   # Find the right CPE at https://nvd.nist.gov/products/cpe/search
   - name: "VMware vCenter Server"
@@ -51,7 +99,12 @@ products:
 
   - name: "WordPress"
     cpe:  "cpe:2.3:a:wordpress:wordpress:*"
-    alert_mode: batch
+
+  # Consumer-tier example: accumulates CVEs and flushes one digest per
+  # product every week (per the `consumer` category above).
+  - name: "VLC media player"
+    cpe:  "cpe:2.3:a:videolan:vlc_media_player:*"
+    category: consumer
 
   # Strict version-pin example - only matches CVEs explicitly tagged 2.14.1
   # - name: "Apache Log4j 2.14.1 only"

@@ -12,10 +12,11 @@ Docs:
 --dry-run prints the exact text body to stdout and sends nothing.
 
 Batch (digest) mode:
-  When a product is configured with alert_mode: batch (in products.yaml),
-  CVEs are grouped by product and sent as one digest per run instead of
-  one card per CVE. The digest card summarises CVSS range, EPSS range,
-  KEV count, and lists each CVE as a hyperlinked advisory.
+  When a product's category uses alert_mode: batch (in products.yaml),
+  CVEs accumulate per TIER and flush as ONE digest card per tier when the
+  period elapses, grouped by product inside the card. The digest card
+  summarises CVSS range, EPSS range, KEV count, then lists each product's
+  CVEs as hyperlinked advisories.
 """
 from __future__ import annotations
 
@@ -73,6 +74,32 @@ def send_batch_alert(
     _post(webhook_url, payload, timeout)
 
 
+def send_digest_alert(
+    webhook_url: str,
+    tier_name: str,
+    entries: list[dict[str, Any]],
+    dry_run: bool = False,
+    timeout: float = 15.0,
+    accent_color: str | None = None,
+    category: str | None = None,
+) -> None:
+    """Send ONE accumulated digest for a tier (category).
+
+    `entries` come from the persisted pending-batch store (see
+    notifier.match_to_entry); each entry carries the product names it belongs
+    to, so the card renders product groups inside the single tier card.
+    Raises NotifyError on delivery failure; caller keeps entries for the
+    next retry.
+    """
+    if not entries:
+        return
+    payload = _build_digest_payload(tier_name, entries, accent_color, category)
+    if dry_run:
+        print(_dry_run_digest_render(tier_name, entries, accent_color, category))
+        return
+    _post(webhook_url, payload, timeout)
+
+
 def _dry_run_render(match: Match, is_update: bool) -> str:
     """Best-effort plain-text rendering of the card for --dry-run."""
     cve = match.cve
@@ -81,7 +108,7 @@ def _dry_run_render(match: Match, is_update: bool) -> str:
     epss = f"{match.epss * 100:.1f}%" if match.epss is not None else "n/a"
     kev = "Yes (CISA actively exploited)" if match.kev else "No"
     upd = " [UPDATED]" if is_update else ""
-    title = _derive_title(match)
+    title = derive_title(match)
     products = ", ".join(p.name for p in match.products)
     lines = [
         f"{cve.cve_id}{upd}: {title}",
@@ -93,6 +120,14 @@ def _dry_run_render(match: Match, is_update: bool) -> str:
         f"KEV:      {kev}",
         f"Advisory: {cve.nvd_url}",
     ]
+    if match.products and match.products[0].accent_color:
+        accent = match.products[0].accent_color
+        cat = match.products[0].category
+        if cat and cat != "default":
+            label = match.products[0].category_label or cat
+            lines.append(f"Footer:   <{label}> line in {accent}")
+        else:
+            lines.append(f"Footer:   line in {accent}")
     return "\n".join(lines)
 
 
@@ -151,8 +186,96 @@ def _dry_run_batch_render(product_name: str, matches: list[Match]) -> str:
     lines.append("")
     lines.append("Advisories: See below")
     for i, m in enumerate(matches, 1):
-        title = _derive_title(m, max_len=55)
+        title = derive_title(m, max_len=55)
         lines.append(f"{i}. {m.cve.cve_id}: {title}")
+    return "\n".join(lines)
+
+
+def _dry_run_digest_render(
+    tier_name: str,
+    entries: list[dict[str, Any]],
+    accent_color: str | None = None,
+    category: str | None = None,
+) -> str:
+    """Best-effort plain-text rendering of a tier digest for --dry-run.
+
+    Mirrors _build_digest_payload as closely as ASCII allows: same header
+    wording, same tight layout, product groups, same 55-char title cap.
+    """
+    n = len(entries)
+    scores = sorted([e["cvss_score"] for e in entries if e.get("cvss_score") is not None])
+    sevs_seen: list[str] = []
+    sev_map = {
+        "CRITICAL": "Critical", "HIGH": "High", "MEDIUM": "Medium",
+        "LOW": "Low", "NONE": "None", "UNKNOWN": "Unknown",
+    }
+    for e in entries:
+        label = sev_map.get((e.get("severity") or "UNKNOWN").upper(), "Unknown")
+        if label not in sevs_seen:
+            sevs_seen.append(label)
+    epss_vals = [e["epss"] for e in entries if e.get("epss") is not None]
+    kev_ids = [e["cve_id"] for e in entries if e.get("kev")]
+    statuses = sorted({e.get("vuln_status", "Unknown") for e in entries})
+
+    lines = [f"{tier_name} CVEs ({n})" if tier_name != "default" else f"CVEs ({n})", ""]
+
+    if scores:
+        if abs(scores[0] - scores[-1]) < 0.05:
+            cvss_line = f"CVSS: {scores[0]:.1f} ("
+        else:
+            cvss_line = f"CVSS Range: {scores[0]:.1f} to {scores[-1]:.1f} ("
+        if len(sevs_seen) == 1:
+            suffix = " only" if n > 1 else ""
+            cvss_line += f"{sevs_seen[0]}{suffix})"
+        else:
+            cvss_line += f"{', '.join(sevs_seen)})"
+        lines.append(cvss_line)
+    else:
+        lines.append("CVSS: N/A")
+
+    lines.append(f"Status: {', '.join(statuses)}")
+    if epss_vals:
+        lo, hi = min(epss_vals) * 100, max(epss_vals) * 100
+        if abs(lo - hi) < 0.05:
+            lines.append(f"EPSS: {lo:.1f}%")
+        else:
+            lines.append(f"EPSS Range: {lo:.1f}% to {hi:.1f}%")
+    else:
+        lines.append("EPSS: n/a")
+    if kev_ids:
+        lines.append(f"KEV: {len(kev_ids)} actively exploited ({', '.join(kev_ids)})")
+    else:
+        lines.append("KEV: None")
+
+    # Product groups (same ordering rule as the card builder).
+    order: list[str] = []
+    for e in entries:
+        prods = e.get("products") or [tier_name]
+        for p in prods:
+            if p not in order:
+                order.append(p)
+    groups: dict[str, list[dict[str, Any]]] = {p: [] for p in order}
+    for e in entries:
+        first = (e.get("products") or [tier_name])[0]
+        groups[first].append(e)
+
+    idx = 1
+    for p in order:
+        group = groups[p]
+        if not group:
+            continue
+        lines.append("")
+        lines.append(f"{p} ({len(group)})")
+        for e in group:
+            title = e.get("title") or "(no title)"
+            if len(title) > 55:
+                title = title[:54].rstrip() + "\u2026"
+            lines.append(f"{idx}. {e['cve_id']}: {title}")
+            idx += 1
+
+    if accent_color:
+        tag = f"<{category}> " if category and tier_name != "default" else ""
+        lines.append(f"Footer:   {tag}line in {accent_color}")
     return "\n".join(lines)
 
 
@@ -169,8 +292,9 @@ def send_test(webhook_url: str, dry_run: bool = False, timeout: float = 15.0) ->
 # ---------- card builder ----------
 #
 # Output: cardsV2 message with decoratedText widgets, one per row.
-# Top-level `text` field is the notification preview (mobile push, channel
-# list, plain-text fallback). The card is the rich body.
+# Alerts are CARD-ONLY (no top-level `text`) so Google Chat renders just the
+# card with no duplicate plain-text line above it. Only send_test uses a
+# top-level `text` payload.
 #
 # Verified against official docs at developers.google.com/workspace/chat:
 # - `text` field: Hangouts-style *bold* / _italic_ / ~strike~ / `code`, no HTML.
@@ -189,12 +313,17 @@ SEVERITY_COLOR = {
     "UNKNOWN":  "#7f8c8d",
 }
 
+# Footer accent line: a short row of box-drawing characters rendered in the
+# category's accent_color. Length tuned for Google Chat mobile card width -
+# 20 chars spans ~2/3 of the card on desktop and does not wrap on phones.
+ACCENT_LINE = "\u2501" * 20  # ━━━━━━━━━━━━━━━━━━━━
+
 
 # CWE short-name table moved to ccc/cwe.py so the notifier stays focused
 # on formatting + transport. Lookup via cwe.lookup(cwe_id).
 
 
-def _derive_title(match: "Match", max_len: int = 120) -> str:
+def derive_title(match: "Match", max_len: int = 120) -> str:
     """Resolve a clean human title in priority order:
 
       1. CISA KEV vulnerabilityName (curated, short, definitive)
@@ -226,6 +355,28 @@ def _derive_title(match: "Match", max_len: int = 120) -> str:
     return _truncate(text, max_len)
 
 
+# Back-compat alias for anything importing the old private name.
+_derive_title = derive_title
+
+
+def match_to_entry(match: "Match") -> dict[str, Any]:
+    """Serialize a Match into a pending-batch entry (persisted in state).
+
+    The entry carries everything the digest card needs so the flush can
+    render without re-fetching NVD. Title is pre-derived (55-char cap, the
+    same as the digest advisory rows).
+    """
+    return {
+        "cve_id": match.cve.cve_id,
+        "title": derive_title(match, max_len=55),
+        "cvss_score": match.cve.cvss_score,
+        "severity": (match.cve.cvss_severity or "UNKNOWN").upper(),
+        "epss": match.epss,
+        "kev": match.kev,
+        "vuln_status": match.cve.vuln_status,
+    }
+
+
 def _truncate(s: str, max_len: int) -> str:
     if len(s) > max_len:
         return s[:max_len - 1].rstrip() + "\u2026"
@@ -251,7 +402,7 @@ def _build_payload(match: Match, is_update: bool) -> dict[str, Any]:
 
     # All values escaped before they touch the HTML body.
     cve_id_e   = _esc(cve.cve_id)
-    title_e    = _esc(_derive_title(match))
+    title_e    = _esc(derive_title(match))
     products_e = _esc(", ".join(p.name for p in match.products))
     status_e   = _esc(cve.vuln_status)
     vector_e   = _esc(cve.cvss_vector or "n/a")
@@ -279,6 +430,24 @@ def _build_payload(match: Match, is_update: bool) -> dict[str, Any]:
         f"<b>KEV:</b> {kev_value}<br>"
         f"<b>Advisory:</b> <a href=\"{nvd_url_e}\">{nvd_url_e}</a>"
     )
+
+    # Category footer: italic tier label (in the accent color) above the
+    # colored line. Both render only when the category defines accent_color.
+    # The implicit "default" category is never labeled (untiered products).
+    accent = match.products[0].accent_color if match.products else None
+    if accent:
+        accent_e = _esc(accent)
+        footer_parts: list[str] = []
+        category = match.products[0].category if match.products else None
+        if category and category != "default":
+            label = match.products[0].category_label or category
+            footer_parts.append(
+                f"<i><font color=\"{accent_e}\">{_esc(label)}</font></i>"
+            )
+        footer_parts.append(
+            f"<font color=\"{accent_e}\"><b>{ACCENT_LINE}</b></font>"
+        )
+        body += "<br><br>" + "<br>".join(footer_parts)
 
     widgets = [{"textParagraph": {"text": body}}]
 
@@ -387,7 +556,7 @@ def _build_batch_payload(product_name: str, matches: list[Match]) -> dict[str, A
     for i, m in enumerate(matches, 1):
         nvd_url_e = _esc(m.cve.nvd_url, quote=True)
         cve_id_e = _esc(m.cve.cve_id)
-        title_e = _esc(_derive_title(m, max_len=55))
+        title_e = _esc(derive_title(m, max_len=55))
         advisory_lines.append(
             f"{i}. <a href=\"{nvd_url_e}\">{cve_id_e}: {title_e}</a>"
         )
@@ -402,18 +571,158 @@ def _build_batch_payload(product_name: str, matches: list[Match]) -> dict[str, A
 
     body = f"{header}<br><br>{summary_lines}<br><br>{advisories_block}"
 
-    # Top-level text for notification preview (plain text, simple markup).
-    preview_scores = f"{scores[0]:.1f}" if scores else "N/A"
-    if len(scores) > 1:
-        preview_scores += f"-{scores[-1]:.1f}"
-    kev_tag = ", includes KEV" if kev_matches else ""
-    preview = f"{product_name} CVEs ({n}): CVSS {preview_scores}{kev_tag}"
-
     return {
-        "text": preview,
         "cardsV2": [
             {
                 "cardId": f"batch-{product_name.replace(' ', '-')}",
+                "card": {
+                    "sections": [
+                        {"widgets": [{"textParagraph": {"text": body}}]}
+                    ],
+                },
+            }
+        ],
+    }
+
+
+def _build_digest_payload(
+    tier_name: str,
+    entries: list[dict[str, Any]],
+    accent_color: str | None = None,
+    category: str | None = None,
+) -> dict[str, Any]:
+    """Build one accumulated-digest cardsV2 message for a TIER.
+
+    ONE card per tier: summary header (CVSS range, EPSS range, KEV count)
+    followed by advisory groups per product (each entry's `products` list).
+    Numbering is continuous across the whole card. All values escaped.
+    """
+    n = len(entries)
+
+    scores = sorted([e["cvss_score"] for e in entries if e.get("cvss_score") is not None])
+    sevs_seen: list[str] = []
+    for e in entries:
+        s = (e.get("severity") or "UNKNOWN").upper()
+        sev_map = {"CRITICAL": "Critical", "HIGH": "High", "MEDIUM": "Medium", "LOW": "Low", "NONE": "None", "UNKNOWN": "Unknown"}
+        label = sev_map.get(s, "Unknown")
+        if label not in sevs_seen:
+            sevs_seen.append(label)
+
+    epss_vals = [e["epss"] for e in entries if e.get("epss") is not None]
+    kev_entries = [e for e in entries if e.get("kev")]
+    statuses = sorted({e.get("vuln_status", "Unknown") for e in entries})
+
+    if scores:
+        min_s = scores[0]
+        max_s = scores[-1]
+        if abs(min_s - max_s) < 0.05:
+            cvss_html = f"<b>CVSS:</b> {min_s:.1f} ("
+        else:
+            cvss_html = f"<b>CVSS Range:</b> {min_s:.1f} to {max_s:.1f} ("
+        if len(sevs_seen) == 1:
+            s = sevs_seen[0]
+            s_key = s.upper()
+            color = SEVERITY_COLOR.get(s_key, SEVERITY_COLOR["UNKNOWN"])
+            suffix = " only" if n > 1 else ""
+            cvss_html += f"<font color=\"{_esc(color)}\"><b>{_esc(s)}</b></font>{suffix})"
+        else:
+            sev_parts = []
+            for s in sevs_seen:
+                s_key = s.upper()
+                color = SEVERITY_COLOR.get(s_key, SEVERITY_COLOR["UNKNOWN"])
+                sev_parts.append(
+                    f"<font color=\"{_esc(color)}\"><b>{_esc(s)}</b></font>"
+                )
+            cvss_html += ", ".join(sev_parts) + ")"
+    else:
+        cvss_html = "<b>CVSS:</b> N/A"
+
+    status_html = f"<b>Status:</b> {_esc(', '.join(statuses))}"
+
+    if epss_vals:
+        lo, hi = min(epss_vals) * 100, max(epss_vals) * 100
+        if abs(lo - hi) < 0.05:
+            epss_html = f"<b>EPSS:</b> {lo:.1f}%"
+        else:
+            epss_html = f"<b>EPSS Range:</b> {lo:.1f}% to {hi:.1f}%"
+    else:
+        epss_html = "<b>EPSS:</b> n/a"
+
+    if kev_entries:
+        kev_list = ", ".join(
+            f"<font color=\"#cc0000\"><b>{_esc(e['cve_id'])}</b></font>"
+            for e in kev_entries
+        )
+        kev_html = (
+            f"<b>KEV:</b> {len(kev_entries)} actively exploited ({kev_list})"
+        )
+    else:
+        kev_html = "<b>KEV:</b> None"
+
+    # --- advisory groups: ordered by first-seen product ---
+    # Each entry lists the products (within this tier) it matched. Group them
+    # under product sub-headers; an entry that matched several products in the
+    # tier appears under its first product only.
+    order: list[str] = []
+    for e in entries:
+        prods = e.get("products") or [tier_name]
+        for p in prods:
+            if p not in order:
+                order.append(p)
+    groups: dict[str, list[dict[str, Any]]] = {p: [] for p in order}
+    for e in entries:
+        first = (e.get("products") or [tier_name])[0]
+        groups[first].append(e)
+
+    group_blocks: list[str] = []
+    idx = 1
+    for p in order:
+        group = groups[p]
+        if not group:
+            continue
+        # Product header + its CVEs joined by SINGLE <br> (no blank lines
+        # between entries under the same product).
+        parts = [f"<b>{_esc(p)}</b> ({len(group)})"]
+        for e in group:
+            cve_id = e["cve_id"]
+            nvd_url = f"https://nvd.nist.gov/vuln/detail/{cve_id}"
+            nvd_url_e = _esc(nvd_url, quote=True)
+            cve_id_e = _esc(cve_id)
+            title_e = _esc(e.get("title") or "(no title)")
+            parts.append(
+                f"{idx}. <a href=\"{nvd_url_e}\">{cve_id_e}: {title_e}</a>"
+            )
+            idx += 1
+        group_blocks.append("<br>".join(parts))
+
+    header = "<b>C³ - New CVE Alerts</b>"
+    summary_lines = "<br>".join([cvss_html, status_html, epss_html, kev_html])
+    # Blank line between product groups only.
+    advisories_block = "<br><br>".join(group_blocks)
+
+    body = f"{header}<br><br>{summary_lines}"
+    if advisories_block:
+        body += "<br><br>" + advisories_block
+
+    # Category footer: italic tier label (in the accent color) above the
+    # colored line. Both render only when accent_color is set. The implicit
+    # "default" tier is never labeled. `category` carries the display label.
+    if accent_color:
+        accent_e = _esc(accent_color)
+        footer_parts: list[str] = []
+        if category and tier_name != "default":
+            footer_parts.append(
+                f"<i><font color=\"{accent_e}\">{_esc(category)}</font></i>"
+            )
+        footer_parts.append(
+            f"<font color=\"{accent_e}\"><b>{ACCENT_LINE}</b></font>"
+        )
+        body += "<br><br>" + "<br>".join(footer_parts)
+
+    return {
+        "cardsV2": [
+            {
+                "cardId": f"tier-{tier_name.replace(' ', '-')}",
                 "card": {
                     "sections": [
                         {"widgets": [{"textParagraph": {"text": body}}]}

@@ -133,7 +133,13 @@ def find_matches(
     `cve.cve_id in kev_map`; the value (when present) is the CISA-curated title.
     """
     out: list[Match] = []
+    min_year = cfg.min_cve_year
     for cve in cves:
+        # Operator cut-off: never alert on CVEs published before this year.
+        # NVD re-touches ancient CVEs (lastModified moves) which would
+        # otherwise keep them entering the poll window forever.
+        if min_year is not None and cve.published.year < min_year:
+            continue
         product_hits = match_cve(cve, products)
         if not product_hits:
             continue
