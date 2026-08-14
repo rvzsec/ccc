@@ -23,6 +23,13 @@ nvd_api_key: ""
 # One of: critical | high | medium | low
 severity_floor: high
 
+# Ignore CVEs published before this year. NVD keeps re-touching ancient CVEs
+# (lastModified moves when analysts edit them), so without this an old CVE
+# keeps re-entering the poll window and re-alerting forever.
+# Set to null (or remove the line) to disable the filter.
+# Example: 2025 means only CVEs published in 2025 or later are alerted.
+# min_cve_year: 2025
+
 # CISA Known Exploited Vulnerabilities. If true, KEV CVEs alert regardless
 # of severity floor (they are being actively exploited in the wild).
 kev_bypass_floor: true

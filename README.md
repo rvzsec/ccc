@@ -129,6 +129,64 @@ it's ~12 s. Subsequent runs are instant (cache hits).
 Run `docker compose run --rm ccc validate` (or `.venv/bin/ccc validate` in
 local mode) to resolve everything and verify before scheduling.
 
+### Categories (tiers) & batch periods
+
+`products.yaml` supports an optional `categories:` block that groups products
+by alert policy — e.g. tier-1 production apps get immediate cards, consumer
+apps get one weekly digest per tier instead of hourly spam.
+
+```yaml
+categories:
+  default:                          # implicit if you omit the block
+    alert_mode: individual
+  consumer:
+    alert_mode: batch
+    batch_period: weekly            # daily | weekly
+    accent_color: "#d4ac0d"         # optional colored footer line
+
+products:
+  - jenkins                                    # -> default (individual)
+  - name: "VLC media player"
+    cpe:  "cpe:2.3:a:videolan:vlc_media_player:*"
+    category: consumer                         # -> weekly digest
+```
+
+- `alert_mode: individual` — one card per CVE, sent immediately.
+- `alert_mode: batch` — CVEs accumulate in `state/pending_batches.json`
+  **per tier** and flush as **ONE digest card per tier** when the period
+  elapses (daily or weekly), grouped by product inside the card:
+  `Product A (2)` → its CVEs, then `Product B (1)` → its CVE. Products with
+  no category share the implicit `default` tier, so untiered batch products
+  still produce a single card. A failed flush retries next run; flushed CVEs
+  are recorded in `recent.json` so they never re-alert.
+- `accent_color: "#rrggbb"` — renders a footer on every card in the category
+  (both individual cards and digests): the tier label in italic + a colored
+  line, both in the accent color. Untiered (`default`) products get the line
+  only. Example tier mapping: tier1 `#cc0000`, tier2 `#e67e22`, tier3
+  `#d4ac0d`, tier4 `#2e86c1`, tier5 `#7f8c8d`.
+- `label: "Tier 1 - Production Stack"` — optional pretty name shown on the
+  card footer instead of the raw category key (`tier1`). Falls back to the
+  key when omitted.
+- A per-product `alert_mode:` key overrides the category for that product.
+- The digest card opens with a generic `C³ - New CVE Alerts` header, then the
+  summary (CVSS range, severity, EPSS, KEV) and the product-grouped,
+  numbered, hyperlinked advisory list. The tier label + colored line sit in
+  the footer.
+
+### Ignoring old CVEs (`min_cve_year`)
+
+NVD keeps re-touching ancient CVEs — analysts edit entries, `lastModified`
+moves, and the CVE re-enters your poll window even though it was published
+years ago. To only alert on CVEs published in or after a given year, set in
+`config/config.yaml`:
+
+```yaml
+min_cve_year: 2025        # null / omitted = no limit
+```
+
+CVEs published before 2025 are dropped in `find_matches` before any matching
+or queueing — they never reach the webhook.
+
 ### Google Chat webhook
 
 In a Chat space: **Apps & integrations → Webhooks → Add webhook**.
@@ -178,12 +236,13 @@ Under the `ccc-state` Docker volume (`/state` inside the container) — or
 
 ```
 state/
-├── ccc.lock         # flock fd, 0 bytes - L1 dedup
-├── last_run.txt     # one ISO-8601 UTC timestamp - written on full success
-├── recent.json      # {cve_id: {hash, seen_at}}, rotates entries > 14 days
-├── audit.jsonl      # append-only log; rotates at 10 MB, keeps 5 backups
-├── kev.json         # CISA KEV cache, refreshed every 6 h (~130 KB)
-└── cpe_cache.json   # resolved product-name -> CPE lookup, written once per product
+├── ccc.lock                # flock fd, 0 bytes - L1 dedup
+├── last_run.txt            # one ISO-8601 UTC timestamp - written on full success
+├── recent.json             # {cve_id: {hash, seen_at}}, rotates entries > 14 days
+├── pending_batches.json    # accumulated digest entries per batch-mode product
+├── audit.jsonl             # append-only log; rotates at 10 MB, keeps 5 backups
+├── kev.json                # CISA KEV cache, refreshed every 6 h (~130 KB)
+└── cpe_cache.json          # resolved product-name -> CPE lookup, written once per product
 ```
 
 **Total state size** in typical use: ~200 KB. Hard cap: ~60 MB once

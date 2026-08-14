@@ -80,7 +80,7 @@ def compute_window(
 
 # ---------- recent.json (hash cache) ----------
 
-def _hash_alert(
+def hash_alert(
     cve_id: str,
     cvss_score: float | None,
     kev: bool,
@@ -100,6 +100,10 @@ def _hash_alert(
     cvss_str = "" if cvss_score is None else f"{cvss_score:.1f}"
     payload = f"{cve_id}|{cvss_str}|{int(kev)}|{epss_bucket}"
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+# Back-compat alias for anything importing the old private name.
+_hash_alert = hash_alert
 
 
 def load_recent(state_dir: Path) -> dict[str, dict[str, Any]]:
@@ -130,6 +134,45 @@ def save_recent(state_dir: Path, recent: dict[str, dict[str, Any]], now: datetim
     _atomic_write(state_dir / "recent.json", json.dumps(pruned, indent=2, sort_keys=True))
 
 
+# ---------- pending_batches.json (accumulated tier digest entries) ----------
+
+# One bucket per TIER (category name):
+#   {tier_name: {"period_start": ISO, "next_due": ISO, "entries": [entry...]}}
+# Entries accumulate across runs until `next_due`; a flush then sends ONE
+# digest card for the tier (grouped by product) and marks each CVE in
+# recent.json (so it never re-alerts). Products without a category share the
+# implicit "default" bucket, so untiered products still get a single card.
+
+
+def load_pending(state_dir: Path) -> dict[str, dict[str, Any]]:
+    """Load pending_batches.json. Returns empty dict on missing/corrupt."""
+    path = state_dir / "pending_batches.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("pending_batches.json root is not a dict")
+        return data
+    except (json.JSONDecodeError, ValueError, OSError) as e:
+        log.warning("pending_batches.json corrupt (%s), starting fresh", e)
+        return {}
+
+
+def save_pending(state_dir: Path, pending: dict[str, dict[str, Any]]) -> None:
+    """Atomically write pending_batches.json, dropping empty buckets."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    pruned = {
+        name: bucket
+        for name, bucket in pending.items()
+        if bucket.get("entries")
+    }
+    _atomic_write(
+        state_dir / "pending_batches.json",
+        json.dumps(pruned, indent=2, sort_keys=True),
+    )
+
+
 def check_and_mark(
     recent: dict[str, dict[str, Any]],
     cve_id: str,
@@ -148,7 +191,7 @@ def check_and_mark(
 
     Mutates `recent` in-place to record the new hash + timestamp.
     """
-    h = _hash_alert(cve_id, cvss_score, kev, epss, vuln_status)
+    h = hash_alert(cve_id, cvss_score, kev, epss, vuln_status)
     prev = recent.get(cve_id)
     if prev is None:
         recent[cve_id] = {"hash": h, "seen_at": now.isoformat()}
