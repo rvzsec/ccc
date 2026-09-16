@@ -99,12 +99,33 @@ def match_cve(cve: NvdCve, products: list[Product]) -> list[Product]:
     return hits
 
 
+def _is_unauthenticated(vector: str | None) -> bool | None:
+    """Classify a CVSS vector as unauthenticated-exploitable.
+
+    True  -> PR:N (CVSS 3.0/3.1/4.0) or Au:N (CVSS 2.0)
+    False -> requires privileges (PR:L/H, Au:S/M)
+    None  -> no vector, or no PR/Au token to read (unknown)
+
+    Token-based (split on '/'), NOT substring: CVSS 4.0 environmental
+    vectors carry `MPR:N`, which contains the substring "PR:N" and would
+    otherwise misclassify a base `PR:H` CVE as unauthenticated.
+    """
+    if not vector:
+        return None
+    tokens = vector.split("/")
+    if any(t.startswith("PR:") for t in tokens):
+        return "PR:N" in tokens
+    if any(t.startswith("Au:") for t in tokens):
+        return "Au:N" in tokens
+    return None
+
+
 def passes_gate(
     cve: NvdCve,
     cfg: Config,
     kev_listed: bool,
 ) -> bool:
-    """Apply the severity floor + KEV bypass."""
+    """Apply the severity floor + KEV bypass + optional unauthenticated filter."""
     if cve.vuln_status.lower() == "rejected":
         return False
 
@@ -112,6 +133,16 @@ def passes_gate(
 
     if cfg.kev_bypass_floor and kev_listed:
         return True
+
+    # Opt-in unauthenticated-only filter (PR:N / Au:N). KEV already returned
+    # above, so known-exploited CVEs bypass this gate too.
+    if cfg.unauthenticated_only:
+        unauth = _is_unauthenticated(cve.cvss_vector)
+        if unauth is None:
+            if not cfg.unauthenticated_include_unknown:
+                return False
+        elif not unauth:
+            return False
 
     if cve.cvss_score is None:
         # No score yet. Only alert if KEV (handled above). Otherwise silence.
