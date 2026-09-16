@@ -272,8 +272,13 @@ def _pick_english(descs: list[dict[str, Any]]) -> str:
 
 
 def _pick_cvss(metrics: dict[str, Any]) -> tuple[float | None, str | None, str | None]:
-    """Prefer v3.1, then v3.0, then v2."""
-    for key in ("cvssMetricV31", "cvssMetricV30"):
+    """Prefer v3.1, then v4.0, then v3.0, then v2.
+
+    v3.1 stays first so scores are unchanged for CVEs that carry both 3.1
+    and 4.0. v4.0 is read so a CVE published with ONLY a CVSS 4.0 metric
+    still gets a score/vector instead of being silently dropped by the gate.
+    """
+    for key in ("cvssMetricV31", "cvssMetricV40", "cvssMetricV30"):
         entries = metrics.get(key) or []
         for entry in entries:
             data = entry.get("cvssData") or {}

@@ -218,6 +218,44 @@ class NvdNormalizeTest(unittest.TestCase):
         }))
         self.assertEqual(cve.cvss_score, 9.0)
 
+    def test_normalize_reads_v40_only_cve(self) -> None:
+        """Regression: a CVE carrying ONLY cvssMetricV40 must get its score
+        and vector, not be silently dropped by the gate."""
+        from ccc.nvd import _normalize
+        cve = _normalize(self._make_cve_blob(metrics={
+            "cvssMetricV40": [{
+                "cvssData": {
+                    "baseScore": 9.3,
+                    "baseSeverity": "CRITICAL",
+                    "vectorString": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H",
+                }
+            }],
+        }))
+        self.assertEqual(cve.cvss_score, 9.3)
+        self.assertEqual(cve.cvss_severity, "CRITICAL")
+        self.assertEqual(
+            cve.cvss_vector,
+            "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H",
+        )
+
+    def test_normalize_prefers_v31_over_v40(self) -> None:
+        """v3.1 stays primary so existing CVEs keep their current score."""
+        from ccc.nvd import _normalize
+        cve = _normalize(self._make_cve_blob(metrics={
+            "cvssMetricV31": [{"cvssData": {"baseScore": 9.8, "baseSeverity": "CRITICAL"}}],
+            "cvssMetricV40": [{"cvssData": {"baseScore": 9.3, "baseSeverity": "CRITICAL"}}],
+        }))
+        self.assertEqual(cve.cvss_score, 9.8)
+
+    def test_normalize_prefers_v40_over_v30_and_v2(self) -> None:
+        from ccc.nvd import _normalize
+        cve = _normalize(self._make_cve_blob(metrics={
+            "cvssMetricV40": [{"cvssData": {"baseScore": 8.7, "baseSeverity": "HIGH"}}],
+            "cvssMetricV30": [{"cvssData": {"baseScore": 6.0, "baseSeverity": "MEDIUM"}}],
+            "cvssMetricV2": [{"cvssData": {"baseScore": 4.0}}],
+        }))
+        self.assertEqual(cve.cvss_score, 8.7)
+
     def test_extract_cwes_drops_sentinels(self) -> None:
         from ccc.nvd import _extract_cwes
         weaknesses = [
