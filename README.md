@@ -76,6 +76,9 @@ See [`config/config.example.yaml`](config/config.example.yaml). Knobs you care a
 |---|---|---|
 | `nvd_api_key` | `""` | NVD key, 50 req/30 s with, 5 req/30 s without |
 | `severity_floor` | `high` | Drop CVSS below this. KEV bypasses unless disabled. |
+| `min_cve_year` | `null` | Drop CVEs published before this year ([details](#ignoring-old-cves-min_cve_year)) |
+| `unauthenticated_only` | `false` | Only alert CVEs exploitable without auth, PR:N / Au:N ([details](#unauthenticated-only-filter-unauthenticated_only)) |
+| `unauthenticated_include_unknown` | `true` | With the filter on, keep CVEs whose vector cannot be parsed |
 | `kev_bypass_floor` | `true` | KEV CVEs alert regardless of severity floor |
 | `epss_threshold` | `0.5` | EPSS value that triggers the priority highlight (display only) |
 | `alert_on_update` | `false` | Re-alert when an already-seen CVE's hash changes |
@@ -187,6 +190,43 @@ min_cve_year: 2025        # null / omitted = no limit
 CVEs published before 2025 are dropped in `find_matches` before any matching
 or queueing — they never reach the webhook.
 
+### Unauthenticated-only filter (`unauthenticated_only`)
+
+Off by default. When enabled, only CVEs exploitable **without authentication**
+survive the gate — useful when you care about the internet-facing,
+no-credentials exploits and little else.
+
+```yaml
+unauthenticated_only: true
+unauthenticated_include_unknown: true   # default
+```
+
+The classifier reads the CVSS vector:
+
+- `PR:N` (Privileges Required: None) in CVSS 3.0 / 3.1 / 4.0 → unauthenticated
+- `Au:N` (Authentication: None) in CVSS 2.0 → unauthenticated
+- `PR:L` / `PR:H` (or `Au:S` / `Au:M`) → requires privileges, dropped
+- no vector yet (e.g. `AWAITING_ANALYSIS`) → **unknown**
+
+`unauthenticated_include_unknown: true` (the default) keeps unknown-vector
+CVEs in the stream — fail-open, so a CVE NVD has not scored yet is not lost.
+Set it to `false` to require a confirmed `PR:N` / `Au:N` vector; unknown-vector
+CVEs are then held back until NVD scores them.
+
+Two things worth knowing:
+
+- **KEV bypasses the filter.** A CISA-exploited CVE alerts even when it
+  requires credentials, exactly as it bypasses `severity_floor`. Actively
+  exploited is actively exploited.
+- Parsing is **token-based** (split on `/`), not substring. CVSS 4.0
+  environmental vectors carry `MPR:N`, and a naive `"PR:N" in vector` check
+  would misread a base `PR:H` CVE as unauthenticated. Tokens are compared
+  whole, so that cannot happen.
+
+The filter sits in `passes_gate` alongside the other gates, so a CVE must
+match a product, clear `min_cve_year`, be unauthenticated, and clear the
+severity floor — unless it is KEV, which short-circuits the lot.
+
 ### Google Chat webhook
 
 In a Chat space: **Apps & integrations → Webhooks → Add webhook**.
@@ -219,9 +259,11 @@ Verified by [`tests/test_dedup.py`](tests/test_dedup.py):
 A CVE alerts only if ALL true:
 
 1. It has a `vulnerable: true` CPE in [`products.yaml`](config/products.example.yaml) matched by `(part, vendor, product)`.
-2. `vulnStatus` is not `Rejected`.
-3. Either CVSS ≥ `severity_floor`, **or** CVE is on CISA KEV and `kev_bypass_floor: true`.
-4. Hash differs from any prior entry in `recent.json`. UPDATED variants are dropped unless `alert_on_update: true`.
+2. It was published in or after `min_cve_year`, when that is set.
+3. `vulnStatus` is not `Rejected`.
+4. Either CVSS ≥ `severity_floor`, **or** CVE is on CISA KEV and `kev_bypass_floor: true`.
+5. When `unauthenticated_only: true`: the vector is `PR:N` / `Au:N`, or the vector is unparseable and `unauthenticated_include_unknown: true`. KEV skips this check.
+6. Hash differs from any prior entry in `recent.json`. UPDATED variants are dropped unless `alert_on_update: true`.
 
 `alert_on_update: false` is the default. Most teams do not act on NVD revising
 a CVE you already triaged. Flip to `true` if your workflow wants
@@ -342,6 +384,7 @@ In local mode, replace `docker compose run --rm ccc` with `.venv/bin/ccc`.
 - **NVD assignment lag.** A CVE may be reserved at MITRE for days before NVD enriches it with CPEs. Without CPEs the matcher cannot link it to your product. Most major CVEs (Apache, Fortinet, Cisco) get CPEs within hours; some take days. There is no fix at this layer.
 - **`AWAITING_ANALYSIS` status.** NVD published the CVE but hasn't scored CVSS yet. The gate drops these UNLESS they are KEV-listed. `CVSS: N/A` is noise; KEV-bypass guarantees you still catch actively-exploited ones immediately.
 - **No CPE on the CVE.** Some CVEs never get CPEs (junk submissions, hardware-only bugs). The matcher cannot see them. Keyword fallback is intentionally not implemented to keep signal clean.
+- **CVSS version precedence.** A CVE can carry several CVSS metrics at once. ccc reads them in the order v3.1 → v4.0 → v3.0 → v2.0 and uses the first one present. v3.1 stays first so dual-scored CVEs keep the score you already triage against, and a CVE carrying only a CVSS 4.0 metric is scored instead of silently dropped. The vector from whichever metric wins is the one the gate and the unauthenticated filter read.
 
 ---
 
