@@ -159,6 +159,21 @@ class Config(BaseModel):
         ),
     )
     severity_floor: Severity = "high"
+    unauthenticated_only: bool = Field(
+        default=False,
+        description=(
+            "Opt-in: only alert CVEs exploitable without authentication "
+            "(CVSS PR:N for v3/v4, Au:N for v2). Off by default."
+        ),
+    )
+    unauthenticated_include_unknown: bool = Field(
+        default=True,
+        description=(
+            "When unauthenticated_only is on: CVEs with no parseable CVSS "
+            "vector (e.g. NVD 'Awaiting Analysis') still alert. Set false to "
+            "require a confirmed unauthenticated vector."
+        ),
+    )
     poll_overlap_minutes: int = Field(default=10, ge=0, le=120)
     max_lookback_hours: int = Field(default=24, ge=1, le=2880)  # 120d NVD cap
     google_chat_webhook: HttpUrl

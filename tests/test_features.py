@@ -107,6 +107,98 @@ class YearFilterTest(unittest.TestCase):
         self.assertEqual(matches, [])
 
 
+class UnauthenticatedFilterTest(unittest.TestCase):
+    """Opt-in PR:N / Au:N gate in passes_gate. Off by default."""
+
+    def setUp(self) -> None:
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="ccc-unauth-"))
+
+    def tearDown(self) -> None:
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _cve(self, vector: str | None, score: float | None = 9.8):
+        return NvdCve(
+            cve_id="CVE-2026-9001",
+            published=utc("2026-01-01T00:00:00"),
+            last_modified=utc("2026-01-01T00:00:00"),
+            vuln_status="Analyzed",
+            description="x",
+            cvss_score=score,
+            cvss_severity="CRITICAL",
+            cvss_vector=vector,
+            cpes=[CpeMatch(cpe="cpe:2.3:a:acme:widget:*", vulnerable=True)],
+        )
+
+    def _gate(self, vector, *, on: bool, unknown: bool = True, kev: bool = False):
+        from ccc.matcher import passes_gate
+        cfg = _cfg(self.tmpdir, unauthenticated_only=on,
+                   unauthenticated_include_unknown=unknown)
+        return passes_gate(self._cve(vector), cfg, kev_listed=kev)
+
+    def test_filter_off_by_default_keeps_privileged_cves(self) -> None:
+        v = "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H"
+        self.assertTrue(self._gate(v, on=False))
+
+    def test_pr_n_passes_when_on(self) -> None:
+        v = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+        self.assertTrue(self._gate(v, on=True))
+
+    def test_pr_l_filtered_when_on(self) -> None:
+        v = "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+        self.assertFalse(self._gate(v, on=True))
+
+    def test_pr_h_filtered_when_on(self) -> None:
+        v = "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H"
+        self.assertFalse(self._gate(v, on=True))
+
+    def test_cvss2_auth_none_passes(self) -> None:
+        v = "AV:N/AC:L/Au:N/C:P/I:P/A:P"
+        self.assertTrue(self._gate(v, on=True))
+
+    def test_cvss2_auth_single_filtered(self) -> None:
+        v = "AV:N/AC:L/Au:S/C:P/I:P/A:P"
+        self.assertFalse(self._gate(v, on=True))
+
+    def test_cvss4_pr_n_passes(self) -> None:
+        v = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H"
+        self.assertTrue(self._gate(v, on=True))
+
+    def test_cvss4_base_pr_h_with_environmental_mpr_n_filtered(self) -> None:
+        """Regression: 'MPR:N' contains the substring 'PR:N'. Token-based
+        parsing must read the BASE PR (H here) and filter the CVE."""
+        v = (
+            "CVSS:4.0/AV:N/AC:L/AT:N/PR:H/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
+            "/CR:H/IR:H/AR:H/MAV:N/MAC:L/MAT:P/MPR:N/MUI:N/MVC:H/MVI:H/MVA:H"
+        )
+        self.assertFalse(self._gate(v, on=True))
+
+    def test_missing_vector_included_by_default(self) -> None:
+        self.assertTrue(self._gate(None, on=True))
+
+    def test_missing_vector_excluded_when_strict(self) -> None:
+        self.assertFalse(self._gate(None, on=True, unknown=False))
+
+    def test_no_cvss_at_all_dropped_by_score_gate(self) -> None:
+        """Awaiting-Analysis CVEs (no score, no vector) never alert - the
+        pre-existing score gate drops them regardless of the unauth filter."""
+        from ccc.matcher import passes_gate
+        cfg = _cfg(self.tmpdir, unauthenticated_only=True,
+                   unauthenticated_include_unknown=True)
+        cve = self._cve(None, score=None)
+        self.assertFalse(passes_gate(cve, cfg, kev_listed=False))
+
+    def test_no_cvss_at_all_kev_still_passes(self) -> None:
+        from ccc.matcher import passes_gate
+        cfg = _cfg(self.tmpdir, unauthenticated_only=True)
+        cve = self._cve(None, score=None)
+        self.assertTrue(passes_gate(cve, cfg, kev_listed=True))
+
+    def test_kev_bypasses_filter(self) -> None:
+        v = "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H"
+        self.assertTrue(self._gate(v, on=True, kev=True))
+
+
 # ============================================================
 # Feature 2: categories in products.yaml
 # ============================================================
