@@ -23,6 +23,18 @@ nvd_api_key: ""
 # One of: critical | high | medium | low
 severity_floor: high
 
+# Opt-in: only alert CVEs exploitable WITHOUT authentication.
+# Reads PR:N from CVSS 3.0/3.1/4.0 and Au:N from CVSS 2.0; PR:L/PR:H and
+# Au:S/Au:M are dropped. KEV-listed CVEs bypass this filter, same as they
+# bypass the severity floor. Off by default.
+unauthenticated_only: false
+
+# Only used when unauthenticated_only is true. CVEs with no parseable CVSS
+# vector yet (e.g. NVD "Awaiting Analysis") still alert when this is true,
+# so nothing unscored is lost. Set false to require a confirmed
+# unauthenticated vector before alerting.
+unauthenticated_include_unknown: true
+
 # Ignore CVEs published before this year. NVD keeps re-touching ancient CVEs
 # (lastModified moves when analysts edit them), so without this an old CVE
 # keeps re-entering the poll window and re-alerting forever.
