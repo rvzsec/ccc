@@ -52,6 +52,10 @@ class RunReport:
     batch_individual: int = 0
     window_start: datetime | None = None
     window_end: datetime | None = None
+    # Feed phase counters (custom Atom/RSS sources).
+    feed_sent: int = 0
+    feed_updated: int = 0
+    feed_suppressed: int = 0
 
     @property
     def summary_line(self) -> str:
@@ -59,6 +63,10 @@ class RunReport:
         if self.batch_digests:
             parts.append(f"batch_digests={self.batch_digests}")
             parts.append(f"batch_cves={self.batch_individual}")
+        if self.feed_sent or self.feed_updated or self.feed_suppressed:
+            parts.append(f"feed_sent={self.feed_sent}")
+            parts.append(f"feed_updated={self.feed_updated}")
+            parts.append(f"feed_suppressed={self.feed_suppressed}")
         return " ".join(parts)
 
 
@@ -167,11 +175,17 @@ def run_once(
     products: list[Product],
     dry_run: bool,
     webhook_url: str | None = None,
+    feeds: list[Any] | None = None,
 ) -> RunReport:
     """Execute one poll cycle.
 
     `webhook_url` defaults to `str(cfg.google_chat_webhook)` - extracted as
     a parameter so tests can drive the runner without a real URL.
+
+    `feeds` is an optional list of ccc.feeds.config.FeedSource. When provided,
+    a feed phase runs after the NVD phase (same webhook, same `now`). Feed
+    fetch/parse failures are non-fatal; a feed webhook failure rolls back that
+    entry's seen-mark and raises DeliveryFailure like the NVD path.
     """
     now = datetime.now(timezone.utc)
     start, end = compute_window(
@@ -408,6 +422,15 @@ def run_once(
                 f"pending state save failed: {save_err}"
             )
 
+    # 4. feed phase - custom Atom/RSS sources. Runs only if the NVD phase
+    #    delivered cleanly (a prior delivery error rolls the window back, so
+    #    feeds retry next cycle too). Per-feed fetch failures are non-fatal.
+    if feeds and delivery_error is None:
+        try:
+            _run_feed_phase(cfg, feeds, dry_run, url, now, report)
+        except DeliveryFailure as e:
+            delivery_error = e
+
     log.info(report.summary_line + f" dry_run={dry_run}")
 
     if delivery_error is not None:
@@ -417,3 +440,175 @@ def run_once(
         write_last_run(cfg.state_dir, now)
 
     return report
+
+
+def _run_feed_phase(
+    cfg: Config,
+    feeds: list[Any],
+    dry_run: bool,
+    url: str,
+    now: datetime,
+    report: RunReport,
+) -> None:
+    """Fetch, filter, dedup, enrich, and alert each configured feed.
+
+    Imports are local so the NVD-only path never pays for the feeds package
+    (and so defusedxml is only required when feeds are actually configured).
+    """
+    from ccc.feeds.enrichbridge import enrich_cves
+    from ccc.feeds.fetch import FeedError, fetch_feed
+    from ccc.feeds.filter import entry_matches, run_extracts
+    from ccc.feeds.notify import entry_to_pending, send_feed_alert, send_feed_digest
+    from ccc.notifier import NotifyError
+    from ccc.state import (
+        check_and_mark_feed,
+        hash_feed_entry,
+        load_feed_pending,
+        load_feed_seen,
+        save_feed_pending,
+        save_feed_seen,
+    )
+
+    feed_seen = load_feed_seen(cfg.state_dir)
+    feed_pending = load_feed_pending(cfg.state_dir)
+    # Batch cadence + presentation, keyed by feed name.
+    period_map = {f.name: f.batch_period for f in feeds}
+    accent_map = {f.name: f.accent_color for f in feeds}
+    label_map = {f.name: f.category_label for f in feeds}
+    # Drop pending buckets for feeds that no longer exist in config.
+    valid = {f.name for f in feeds}
+    for stale in [n for n in feed_pending if n not in valid]:
+        del feed_pending[stale]
+    delivery_error: DeliveryFailure | None = None
+
+    def _resolve_signals(entry: Any, feed: Any) -> list[Any]:
+        entry.extracted = run_extracts(entry, feed.extract)
+        if not feed.enrich:
+            return []
+        cve_ids = entry.extracted.get("cves") or []
+        if not cve_ids:
+            import re as _re
+
+            cve_ids = []
+            for m in _re.finditer(r"CVE-\d{4}-\d{4,7}", entry.content):
+                if m.group(0) not in cve_ids:
+                    cve_ids.append(m.group(0))
+        if not cve_ids:
+            return []
+        return enrich_cves(cve_ids, cfg.state_dir, cfg.nvd_api_key)
+
+    for feed in feeds:
+        try:
+            entries = fetch_feed(str(feed.url), feed.format)
+        except FeedError as e:
+            # A broken/unreachable feed must not fail the whole run.
+            log.warning("feed %r fetch failed: %s", feed.name, e)
+            continue
+
+        log.info("feed %r returned %d entr(y/ies)", feed.name, len(entries))
+
+        for entry in entries:
+            if not entry_matches(entry, feed.match):
+                continue
+
+            stamp = ""
+            if entry.updated:
+                stamp = entry.updated.isoformat()
+            elif entry.published:
+                stamp = entry.published.isoformat()
+            sig = hash_feed_entry(entry.title, stamp, entry.content)
+
+            should_alert, is_update = check_and_mark_feed(
+                feed_seen, feed.name, entry.item_id, sig, now
+            )
+            if not should_alert:
+                report.feed_suppressed += 1
+                continue
+            if is_update and not cfg.alert_on_update:
+                report.feed_suppressed += 1
+                continue
+
+            signals = _resolve_signals(entry, feed)
+
+            if feed.alert_mode == "batch":
+                # Accumulate; flushed as one digest when the period elapses.
+                bucket = feed_pending.setdefault(
+                    feed.name, {"period_start": None, "next_due": None, "entries": []}
+                )
+                if bucket["period_start"] is None:
+                    bucket["period_start"] = now.isoformat()
+                    bucket["next_due"] = (now + _period_delta(feed.batch_period)).isoformat()
+                bucket["entries"].append(entry_to_pending(entry, signals))
+                continue
+
+            try:
+                send_feed_alert(
+                    url, feed.name, entry, signals, is_update,
+                    dry_run=dry_run,
+                    accent_color=feed.accent_color,
+                    category_label=feed.category_label,
+                )
+            except NotifyError as e:
+                log.error("feed webhook FAILED on %r/%s: %s", feed.name, entry.item_id, e)
+                # Roll back this entry's seen-mark so it re-fires next run.
+                bucket = feed_seen.get(feed.name)
+                if bucket is not None:
+                    bucket.pop(entry.item_id, None)
+                delivery_error = DeliveryFailure(
+                    f"feed webhook failed on {feed.name}/{entry.item_id}: {e}"
+                )
+                break
+
+            report.feed_sent += 1
+            if is_update:
+                report.feed_updated += 1
+
+        if delivery_error is not None:
+            break
+
+    # Flush due batch digests (ONE card per feed). Runs even with zero new
+    # entries so an accumulated digest flushes when its period comes due.
+    if delivery_error is None:
+        for feed_name, bucket in feed_pending.items():
+            entries_b = bucket.get("entries") or []
+            if not entries_b:
+                continue
+            due = (
+                datetime.fromisoformat(bucket["next_due"]) if bucket.get("next_due") else None
+            )
+            if due is None or now < due:
+                continue
+            try:
+                send_feed_digest(
+                    url, feed_name, entries_b,
+                    dry_run=dry_run,
+                    accent_color=accent_map.get(feed_name),
+                    category_label=label_map.get(feed_name),
+                )
+            except NotifyError as e:
+                log.error("feed digest webhook FAILED for %r: %s", feed_name, e)
+                delivery_error = DeliveryFailure(f"feed digest failed for {feed_name}: {e}")
+                break
+            report.feed_sent += len(entries_b)
+            bucket["entries"] = []
+            bucket["period_start"] = now.isoformat()
+            bucket["next_due"] = (
+                now + _period_delta(period_map.get(feed_name, "daily"))
+            ).isoformat()
+
+    # Persist seen + pending on all paths (seen prunes scrolled-off entries).
+    try:
+        save_feed_seen(cfg.state_dir, feed_seen, now)
+    except OSError as save_err:
+        log.error("feed_seen save FAILED: %s", save_err)
+        if delivery_error is None:
+            delivery_error = DeliveryFailure(f"feed_seen save failed: {save_err}")
+    try:
+        save_feed_pending(cfg.state_dir, feed_pending)
+    except OSError as save_err:
+        log.error("feed_pending save FAILED: %s", save_err)
+        if delivery_error is None:
+            delivery_error = DeliveryFailure(f"feed_pending save failed: {save_err}")
+
+    if delivery_error is not None:
+        raise delivery_error

@@ -155,6 +155,23 @@ class NvdClient:
             )
         raise NvdError("NVD: retries exhausted")
 
+    def fetch_cve(self, cve_id: str) -> NvdCve | None:
+        """Look up a single CVE by ID (used by the feed enrichment bridge).
+
+        Returns the normalized record or None if NVD has no (or a rejected)
+        entry for the id. Raises NvdError on transport failure so callers can
+        degrade gracefully (feed enrichment is best-effort)."""
+        data = self._get({"cveId": cve_id})
+        for entry in data.get("vulnerabilities") or []:
+            cve_obj = entry.get("cve")
+            if cve_obj and cve_obj.get("id") == cve_id:
+                return _normalize(cve_obj)
+        # Fall back to the first entry if NVD didn't echo the exact id.
+        vulns = data.get("vulnerabilities") or []
+        if vulns and vulns[0].get("cve"):
+            return _normalize(vulns[0]["cve"])
+        return None
+
     def fetch_window(
         self,
         start: datetime,

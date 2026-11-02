@@ -10,8 +10,12 @@ Polls NVD on a schedule. Matches CVEs against your product list by CPE.
 Alerts Google Chat with severity, KEV status, EPSS score, and a curated title.
 Never alerts twice for the same CVE-state.
 
+Also watches **custom Atom/RSS feeds** (e.g. vendor release/advisory feeds) with
+operator-defined filters, and enriches any CVE IDs it finds with NVD/KEV/EPSS.
+See [Custom feeds](#custom-feeds-configfeedsyaml).
+
 - Repo: `ccc` · Brand: `c³`
-- Python 3.11+, 4 hash-pinned dependencies (multi-Python ABI in [`requirements.lock`](requirements.lock))
+- Python 3.11+, 5 hash-pinned dependencies (multi-Python ABI in [`requirements.lock`](requirements.lock))
 - Runs in Docker (recommended) or local venv via `./setup.sh --local`
 - Six flat state files, no database (see [State files](#state-files))
 - Dedup proven by 10 unit tests in [`tests/test_dedup.py`](tests/test_dedup.py)
@@ -176,6 +180,58 @@ products:
   numbered, hyperlinked advisory list. The tier label + colored line sit in
   the footer.
 
+### Custom feeds (`config/feeds.yaml`)
+
+Beyond NVD, C³ can watch arbitrary **Atom/RSS feeds** — vendor release pages,
+security advisory feeds, changelogs — and alert when a matching entry appears
+or changes. This is purely additive: no `feeds.yaml` = NVD-only, exactly as
+before. See [`config/feeds.example.yaml`](config/feeds.example.yaml).
+
+```yaml
+feeds:
+  - name: "GitLab Releases"
+    url: "https://docs.gitlab.com/releases/all-releases.xml"
+    format: atom                       # atom | rss
+
+    match:                             # omit = alert on every new entry
+      any:                             # any = OR, all = AND, both = AND of both
+        - { field: title,   contains: ["Security", "Critical Patch"] }
+        - { field: content, regex: 'CVE-\d{4}-\d+' }
+
+    extract:                           # named regex captures surfaced on the card
+      cves: { from: content, regex: 'CVE-\d{4}-\d+' }
+
+    enrich: true                       # look extracted CVEs up in NVD/KEV/EPSS
+    category: tier1                    # reuses products.yaml categories
+    alert_mode: individual             # individual | batch (daily/weekly digest)
+```
+
+| Field | Required | Default | Effect |
+|---|---|---|---|
+| `name` | yes | — | unique label; namespaces dedup state + the card |
+| `url` | yes | — | feed URL (operator-supplied) |
+| `format` | yes | — | `atom` or `rss` |
+| `match` | no | alert-all | predicate tree; conditions use `contains` (list, case-insensitive OR), `regex` (Python `re`), or `equals` |
+| `extract` | no | — | `{name: {from: <field>, regex: ...}}` — all matches, de-duplicated |
+| `enrich` | no | `false` | resolve extracted CVE IDs to CVSS/KEV/EPSS and show them on the card |
+| `category` | no | `default` | reuses the `categories:` block from `products.yaml` (shared accent/label/period) |
+| `alert_mode` | no | category's | `individual` = one card per entry; `batch` = one digest per feed per period |
+
+- **Fields** available to `match`/`extract`: `title`, `link`, `id`,
+  `published`, `updated`, `summary`, `content`, `author`, `category`.
+- **Dedup** mirrors the CVE path: an entry's identity is its Atom `<id>` /
+  RSS `<guid>`; its change-signature is `sha256(title + updated + content)`.
+  A new entry alerts once; a changed entry fires `[UPDATED]` **only when**
+  `alert_on_update: true` (same toggle as CVEs). Seen-state lives in
+  `feed_seen.json` and keeps every entry still present in the feed, pruning
+  scrolled-off entries after 30 days.
+- **Enrichment** is best-effort: if NVD/EPSS is unreachable the alert still
+  fires with whatever signal was resolved. CVSS lookups are cached in
+  `feed_cve_cache.json`; at most 15 CVEs per entry are enriched (the rest show
+  as bare IDs) so a big release doesn't stall on NVD's 6 s pacing.
+- Preview what a feed matches without sending anything:
+  `docker compose run --rm ccc test-feed` (add `--name "GitLab Releases"`).
+
 ### Ignoring old CVEs (`min_cve_year`)
 
 NVD keeps re-touching ancient CVEs — analysts edit entries, `lastModified`
@@ -284,7 +340,10 @@ state/
 ├── pending_batches.json    # accumulated digest entries per batch-mode product
 ├── audit.jsonl             # append-only log; rotates at 10 MB, keeps 5 backups
 ├── kev.json                # CISA KEV cache, refreshed every 6 h (~130 KB)
-└── cpe_cache.json          # resolved product-name -> CPE lookup, written once per product
+├── cpe_cache.json          # resolved product-name -> CPE lookup, written once per product
+├── feed_seen.json          # per-feed entry dedup (id -> hash), prunes at 30 days
+├── feed_pending.json       # accumulated digest entries for batch-mode feeds
+└── feed_cve_cache.json     # CVSS cache for feed-enriched CVE IDs
 ```
 
 **Total state size** in typical use: ~200 KB. Hard cap: ~60 MB once
@@ -299,7 +358,7 @@ Inspect with `make state` or `make logs`.
 
 ## Supply-chain hardening
 
-Four direct dependencies, all top-tier maintainers, all hash-pinned:
+Five direct dependencies, all top-tier maintainers, all hash-pinned:
 
 | Dep | Version | Maintainer |
 |---|---|---|
@@ -307,6 +366,7 @@ Four direct dependencies, all top-tier maintainers, all hash-pinned:
 | `pydantic` | 2.9.2 | Pydantic team |
 | `pyyaml` | 6.0.2 | Ingy döt Net + Matt Davis |
 | `click` | 8.1.7 | Pallets (Armin Ronacher, Flask / Jinja2) |
+| `defusedxml` | 0.7.1 | Christian Heimes (CPython core, python-security) — hardens untrusted feed-XML parsing; only used when feeds are configured |
 
 Full dependency closure (direct + transitive) pinned in [`requirements.lock`](requirements.lock).
 
@@ -360,8 +420,9 @@ missed runs up to `max_lookback_hours`.
 The four commands you'll actually use:
 
 ```bash
-docker compose run --rm ccc validate       # check config + product CPEs
+docker compose run --rm ccc validate       # check config + product CPEs + feeds
 docker compose run --rm ccc test-webhook   # send a test message to your Chat space
+docker compose run --rm ccc test-feed      # fetch+filter feeds, print what would alert
 docker compose run --rm ccc run            # one poll cycle (this is what cron calls)
 docker compose run --rm ccc run --dry-run  # poll + print alerts, send nothing
 ```
@@ -402,7 +463,8 @@ ccc/
 ├── Makefile                  # contributor targets (build / test / audit / shell / clean)
 ├── config/
 │   ├── config.example.yaml   # documented knobs
-│   └── products.example.yaml # plain names + dict-override forms
+│   ├── products.example.yaml # plain names + dict-override forms
+│   └── feeds.example.yaml    # custom Atom/RSS feed definitions (optional)
 ├── ccc/                      # 10 modules, ~1800 LOC
 │   ├── cli.py                # click CLI: run, validate, test-webhook, version
 │   ├── config.py             # pydantic v2 models, CPE 2.3 validator
@@ -412,7 +474,13 @@ ccc/
 │   ├── enrich.py             # EPSS batch JSON + CISA KEV cached 6 h (with stale fallback)
 │   ├── matcher.py            # CPE triple matching, severity floor + KEV bypass
 │   ├── notifier.py           # Google Chat cardsV2, title resolver, colored severity
-│   └── resolver.py           # NVD CPE Dictionary lookup, on-disk cache, ambiguity handling
+│   ├── resolver.py           # NVD CPE Dictionary lookup, on-disk cache, ambiguity handling
+│   └── feeds/                # custom Atom/RSS feed sources (additive, NVD untouched)
+│       ├── config.py         # feeds.yaml pydantic models + loader
+│       ├── fetch.py          # defusedxml Atom/RSS parse -> normalized FeedEntry
+│       ├── filter.py         # match-rule engine + regex extraction
+│       ├── enrichbridge.py   # feed CVE IDs -> NVD/KEV/EPSS signal (best-effort, cached)
+│       └── notify.py         # feed card + per-feed batch digest
 ├── tests/
 │   └── test_dedup.py         # 10 tests: dedup, CPE case, HTML escape, dry-run, window math
 ├── systemd/

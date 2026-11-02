@@ -34,6 +34,12 @@ pyyaml==6.0.2 \
     --hash=sha256:80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476 \
     --hash=sha256:70b189594dbe54f75ab3a1acec5f1e3faa7e8cf2f1e08d9b561cb41b845f69d5
 
+# Pure-Python, one wheel for all Python minors. Used only when custom feeds
+# are configured (ccc/feeds/). Hardens untrusted-XML parsing (XXE / entity
+# expansion). Maintainer: Christian Heimes (CPython core, python-security).
+defusedxml==0.7.1 \
+    --hash=sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
+
 # ---------------- transitive deps ----------------
 # All from same top-tier maintainers (Encode org, Pydantic team, PSF-adjacent).
 

@@ -203,6 +203,122 @@ def check_and_mark(
     return (True, True)
 
 
+# ---------- feed_seen.json (feed-entry dedup) ----------
+
+# Feeds have no server-side time window, so we diff the whole feed against
+# seen-state each poll. seen_at is refreshed on EVERY observation (present in
+# the feed), so entries still in the feed never age out; entries that scroll
+# off are pruned after this grace period.
+FEED_SEEN_GRACE = timedelta(days=30)
+
+
+def hash_feed_entry(title: str, stamp: str, content: str) -> str:
+    """Change-signature for a feed entry. Re-alert only when this changes.
+
+    `stamp` is the entry's updated-or-published ISO string (empty if absent).
+    Content is folded in so a silent body edit with no timestamp bump still
+    counts as a change.
+    """
+    content_h = hashlib.sha256(content.encode()).hexdigest()[:16] if content else ""
+    payload = f"{title}|{stamp}|{content_h}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def load_feed_seen(state_dir: Path) -> dict[str, dict[str, Any]]:
+    """Load feed_seen.json: {feed_name: {item_id: {hash, seen_at}}}.
+
+    Returns empty dict on missing/corrupt (worst case: one bonus alert per
+    still-present entry)."""
+    path = state_dir / "feed_seen.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("feed_seen.json root is not a dict")
+        return data
+    except (json.JSONDecodeError, ValueError, OSError) as e:
+        log.warning("feed_seen.json corrupt (%s), starting fresh", e)
+        return {}
+
+
+def save_feed_seen(
+    state_dir: Path, feed_seen: dict[str, dict[str, Any]], now: datetime
+) -> None:
+    """Atomically write feed_seen.json after pruning scrolled-off entries."""
+    cutoff_iso = (now - FEED_SEEN_GRACE).isoformat()
+    pruned: dict[str, dict[str, Any]] = {}
+    for feed_name, bucket in feed_seen.items():
+        kept = {
+            item_id: rec
+            for item_id, rec in bucket.items()
+            if rec.get("seen_at", "") >= cutoff_iso
+        }
+        if kept:
+            pruned[feed_name] = kept
+    state_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_write(
+        state_dir / "feed_seen.json", json.dumps(pruned, indent=2, sort_keys=True)
+    )
+
+
+def load_feed_pending(state_dir: Path) -> dict[str, dict[str, Any]]:
+    """Load feed_pending.json: {feed_name: {period_start, next_due, entries}}.
+
+    Accumulated digest entries for batch-mode feeds. Empty/corrupt -> {}.
+    """
+    path = state_dir / "feed_pending.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("feed_pending.json root is not a dict")
+        return data
+    except (json.JSONDecodeError, ValueError, OSError) as e:
+        log.warning("feed_pending.json corrupt (%s), starting fresh", e)
+        return {}
+
+
+def save_feed_pending(state_dir: Path, pending: dict[str, dict[str, Any]]) -> None:
+    """Atomically write feed_pending.json, dropping empty buckets."""
+    pruned = {name: b for name, b in pending.items() if b.get("entries")}
+    state_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_write(
+        state_dir / "feed_pending.json", json.dumps(pruned, indent=2, sort_keys=True)
+    )
+
+
+def check_and_mark_feed(
+    feed_seen: dict[str, dict[str, Any]],
+    feed_name: str,
+    item_id: str,
+    sig_hash: str,
+    now: datetime,
+) -> tuple[bool, bool]:
+    """Feed analogue of check_and_mark.
+
+    Returns (should_alert, is_update):
+      (True,  False) -> never seen, fresh alert
+      (True,  True)  -> seen but change-signature differs, re-alert [UPDATED]
+      (False, False) -> seen with same signature, suppress
+
+    Always refreshes seen_at (so present entries survive the grace prune);
+    only rewrites the stored hash when it changes.
+    """
+    bucket = feed_seen.setdefault(feed_name, {})
+    prev = bucket.get(item_id)
+    now_iso = now.isoformat()
+    if prev is None:
+        bucket[item_id] = {"hash": sig_hash, "seen_at": now_iso}
+        return (True, False)
+    prev["seen_at"] = now_iso  # refresh last-seen regardless of change
+    if prev.get("hash") == sig_hash:
+        return (False, False)
+    prev["hash"] = sig_hash
+    return (True, True)
+
+
 # ---------- audit.jsonl ----------
 
 # Rotate audit.jsonl when it crosses this size. Keep AUDIT_BACKUPS old files.

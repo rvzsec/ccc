@@ -109,6 +109,23 @@ tmp/
 .opencode/
 .claude/
 
+### Design notes & plans (local only - never shipped) #######################
+# Thought-process, design docs, and planning scratch stay out of the repo.
+# Matched by location AND by name so a stray plan file anywhere is ignored.
+docs/
+plans/
+notes/
+scratch/
+*-design.md
+*-plan.md
+*.plan.md
+*.design.md
+DESIGN.md
+PLAN.md
+NOTES.md
+SCRATCH.md
+TODO.local.md
+
 ### Asset build cache #######################################################
 # We commit only the SVGs (assets/logo.svg, assets/architecture.svg).
 # PNGs are derived and re-rendered on demand by tools - never committed.

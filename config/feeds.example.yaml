@@ -1,0 +1,41 @@
+# C³ custom feed sources (OPTIONAL).
+#
+# Copy to config/feeds.yaml and edit. If this file is absent, C³ runs NVD-only
+# exactly as before - feeds are purely additive.
+#
+# Each feed watches an Atom or RSS feed, filters entries with your rules, and
+# alerts your Google Chat webhook when a matching entry appears or CHANGES
+# (the same `alert_on_update` toggle in config.yaml controls [UPDATED] cards).
+#
+# Categories are shared with products.yaml: reference a category by name to
+# inherit its accent_color / label (define them in products.yaml `categories:`).
+
+feeds:
+  # ---- GitLab release/security feed (Atom) ----
+  - name: "GitLab Releases"
+    url: "https://docs.gitlab.com/releases/all-releases.xml"
+    format: atom                       # atom | rss
+
+    # Only alert on security-relevant releases. Omit `match:` to alert on
+    # every new entry. `any` = OR, `all` = AND, both together = AND of both.
+    match:
+      any:
+        - { field: title,   contains: ["Security", "Critical Patch"] }
+        - { field: content, regex: 'CVE-\d{4}-\d+' }
+
+    # Pull CVE IDs out of the HTML body so they appear on the card.
+    extract:
+      cves: { from: content, regex: 'CVE-\d{4}-\d+' }
+
+    # Look those CVE IDs up in NVD/KEV/EPSS so the alert carries real CVSS,
+    # KEV status, and EPSS - not just a title + link. Best-effort: if NVD is
+    # unreachable the alert still fires with whatever signal was resolved.
+    enrich: true
+
+    # Optional: inherit a tier's accent colour/label (see products.yaml).
+    # category: tier1
+
+  # ---- A generic vendor RSS feed with no filter (alert on everything) ----
+  # - name: "Acme Security Advisories"
+  #   url: "https://acme.example.com/advisories/rss.xml"
+  #   format: rss

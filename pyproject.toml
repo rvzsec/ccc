@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ccc"
-version = "0.1.0"
+version = "0.2.0"
 description = "C³ - Continuous CVE Coverage. Polls NVD for CVEs matching your product list and alerts to Google Chat."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,6 +31,7 @@ dependencies = [
     "pydantic==2.9.2",
     "pyyaml==6.0.2",
     "click==8.1.7",
+    "defusedxml==0.7.1",
 ]
 
 [project.scripts]

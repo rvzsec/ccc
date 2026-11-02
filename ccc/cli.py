@@ -33,6 +33,7 @@ from ccc.config import (
     load_categories_and_products,
     load_config,
 )
+from ccc.feeds.config import FeedSource, load_feeds
 from ccc.notifier import NotifyError, send_test
 from ccc.resolver import ResolveError, resolve_names
 from ccc.lock import acquire_or_exit
@@ -82,11 +83,12 @@ def run_cmd(config_path: Path, dry_run: bool) -> None:
     """One poll cycle. Designed to be called by cron / systemd timer."""
     cfg = _load_or_die(config_path)
     products = _load_products_or_die(cfg)
+    feeds = _load_feeds_or_die(cfg)
 
     # Acquire lock BEFORE any I/O. Released on process exit.
     lock = acquire_or_exit(cfg.state_dir / "ccc.lock")
     try:
-        run_once(cfg, products, dry_run)
+        run_once(cfg, products, dry_run, feeds=feeds)
     except RunnerError as e:
         click.echo(f"ccc: {e}", err=True)
         sys.exit(e.exit_code)
@@ -128,10 +130,18 @@ def validate_cmd(config_path: Path) -> None:
         )
         sys.exit(1)
 
+    feeds = _load_feeds_or_die(cfg)
+
     click.echo("")
     click.echo(f"ccc: validation OK. {len(products)} product(s) ready to monitor:")
     for p in products:
         click.echo(f"  - {p.name}  ->  {p.cpe}")
+    if feeds:
+        click.echo("")
+        click.echo(f"ccc: {len(feeds)} feed(s) configured:")
+        for feed in feeds:
+            enr = " [enrich]" if feed.enrich else ""
+            click.echo(f"  - {feed.name}  ({feed.format}){enr}  ->  {feed.url}")
     click.echo("")
     click.echo("Config + webhook URL syntax also valid (webhook deliverability")
     click.echo("not tested here; use 'ccc test-webhook' for that).")
@@ -155,6 +165,52 @@ def test_webhook_cmd(config_path: Path, dry_run: bool) -> None:
     except NotifyError as e:
         click.echo(f"ccc: webhook test FAILED: {e}", err=True)
         sys.exit(3)
+
+
+@main.command("test-feed")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=DEFAULT_CONFIG,
+    show_default=True,
+)
+@click.option("--name", "feed_name", default=None, help="Only test this feed (by name).")
+def test_feed_cmd(config_path: Path, feed_name: str | None) -> None:
+    """Fetch + parse + filter feeds and print what WOULD alert. Sends nothing.
+
+    The feed analogue of test-webhook: use it to author match:/extract: rules.
+    """
+    from ccc.feeds.fetch import FeedError, fetch_feed
+    from ccc.feeds.filter import entry_matches, run_extracts
+
+    cfg = _load_or_die(config_path)
+    feeds = _load_feeds_or_die(cfg)
+    if not feeds:
+        click.echo("ccc: no feeds configured (feeds.yaml missing or empty).", err=True)
+        sys.exit(1)
+
+    if feed_name is not None:
+        feeds = [f for f in feeds if f.name == feed_name]
+        if not feeds:
+            click.echo(f"ccc: no feed named {feed_name!r}.", err=True)
+            sys.exit(1)
+
+    for feed in feeds:
+        click.echo("")
+        click.echo(f"=== {feed.name} ({feed.format}) ===")
+        try:
+            entries = fetch_feed(str(feed.url), feed.format)
+        except FeedError as e:
+            click.echo(f"  FETCH FAILED: {e}", err=True)
+            continue
+        matched = [e for e in entries if entry_matches(e, feed.match)]
+        click.echo(f"  {len(entries)} entr(y/ies), {len(matched)} match the filter:")
+        for e in matched:
+            extracted = run_extracts(e, feed.extract)
+            cves = extracted.get("cves") or []
+            tail = f"   cves={cves}" if cves else ""
+            click.echo(f"    - {e.title[:80]}{tail}")
 
 
 # ---------- helpers ----------
@@ -266,6 +322,32 @@ def _load_products_or_die(cfg: Config) -> list[Product]:
         click.echo("ccc: products list is empty", err=True)
         sys.exit(1)
     return products
+
+
+def _load_feeds_or_die(cfg: Config) -> list[FeedSource]:
+    """Load feeds.yaml if present. Missing file = no feeds (NVD-only, fine).
+
+    Categories are shared with products.yaml (single source of truth), so we
+    read the category map from there before validating feed category refs.
+    """
+    path = cfg.feeds_file
+    if not path.exists():
+        return []
+
+    try:
+        categories, _ = load_categories_and_products(cfg.products_file)
+    except Exception:
+        # If products.yaml has no categories (or is itself broken), fall back
+        # to just the implicit default so a feed-only config still validates.
+        from ccc.config import DEFAULT_CATEGORY, Category
+
+        categories = {DEFAULT_CATEGORY: Category(name=DEFAULT_CATEGORY)}
+
+    try:
+        return load_feeds(path, categories)
+    except Exception as e:
+        click.echo(f"ccc: feeds invalid ({path}): {e}", err=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

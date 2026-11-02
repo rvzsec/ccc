@@ -185,8 +185,15 @@ class Config(BaseModel):
     alert_on_update: bool = False
     state_dir: Path = Field(default=Path.home() / ".local/state/ccc")
     products_file: Path = Field(default=Path.home() / ".config/ccc/products.yaml")
+    feeds_file: Path = Field(
+        default=Path.home() / ".config/ccc/feeds.yaml",
+        description=(
+            "Optional custom-feed definitions (Atom/RSS). Missing file = no "
+            "feeds configured; C³ runs NVD-only exactly as before."
+        ),
+    )
 
-    @field_validator("state_dir", "products_file")
+    @field_validator("state_dir", "products_file", "feeds_file")
     @classmethod
     def _expand(cls, v: Path) -> Path:
         return v.expanduser().resolve()
